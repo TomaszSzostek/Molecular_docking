@@ -1,39 +1,38 @@
-import pandas as pd
+import sys, pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+from rdkit import Chem
+from rdkit.Chem import SDWriter
+from utils.validation import rmsd_atoms
 
 def rank_vs_native(cfg, log):
-    outdir = Path(cfg['paths']['output_folder'])
-    df = pd.read_parquet(outdir / 'results.parquet')
+    out = Path(cfg["paths"]["output_folder"])
+    df_path = out / "results.csv"
+    if not df_path.exists():
+        log.error("results.csv not found. Run docking first.")
+        return
 
-    # native & hit tables
-    native = df[df.is_native].groupby('receptor')['score'].min().rename('native_score')
-    hits   = df[~df.is_native].merge(native, on='receptor')
+    df = pd.read_csv(df_path)
+    margin = cfg["postprocess"]["native_margin"]
 
-    # save min/max per ligand × receptor  (full supplement)
-    per_lig = df.groupby(['ligand','receptor']) \
-                .agg(min_affinity=('score','min'),
-                     max_affinity=('score','max')) \
-                .reset_index()
-    per_lig.to_csv(outdir / 'poses_min_max.csv', index=False)
+    # tylko native redock
+    if "redock" not in df["mode"].iloc[0]:
+        log.info("Skipping postprocess – not native redocking mode.")
+        return
 
-    # filter by native_margin
-    margin = cfg['postprocess']['native_margin']
-    hits = hits[hits.score < hits.native_score - margin]
+    # znajdź minimalne affinitiy dla natywnego liganda (per receptor)
+    native_df = df[df["is_native"] == True]
+    native_scores = native_df.groupby("receptor")["min_affinity"].min().rename("native_score")
 
-    # global Top‑N for the manuscript
-    top_n = cfg['postprocess']['top_n']
-    hits.nsmallest(top_n, 'score') \
-        .to_csv(outdir / 'hits_vs_native.csv', index=False)
+    # znajdź wszystkie testowe ligandy (czyli nie-native)
+    hits = df[df["is_native"] == False].copy()
 
-    # histogram
-    plt.figure()
-    hits['score'].hist(bins=30)
-    plt.xlabel('Docking score (kcal/mol)')
-    plt.ylabel('Count')
-    plt.title('Scores better than native')
-    plt.savefig(outdir / 'score_hist.png', dpi=300)
-    plt.close()               # <‑‑ free memory
+    # dołącz natywne affinitiy do każdej grupy receptorowej
+    hits = hits.merge(native_scores, on="receptor", how="left")
 
-    log.info(f"Saved: poses_min_max.csv ({len(per_lig)} rows), "
-             f"hits_vs_native.csv ({len(hits)}), score_hist.png")
+    # filtruj tylko te, które mają lepsze wiązanie niż natywny ligand - z marginesem
+    hits = hits[hits["min_affinity"] < hits["native_score"] - margin]
+
+    hits_path = out / "better_than_native.csv"
+    hits.to_csv(hits_path, index=False)
+    log.info(f"Found {len(hits)} hits better than native ligands.")

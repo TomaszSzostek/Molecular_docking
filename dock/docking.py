@@ -1,92 +1,97 @@
-from concurrent.futures import ProcessPoolExecutor
+import subprocess
+from multiprocessing import Pool
 from pathlib import Path
-import subprocess, json, time
-from utils.validation import files_ok
+from itertools import product
 from tqdm import tqdm
-# ── helpers ───────────────────────────────────────────
-
-# ── helpers ───────────────────────────────────────────
-def _load_box(receptor_path, cfg):
-    box_json = Path(receptor_path).with_suffix('.box.json')
-    if box_json.exists():
-        with open(box_json) as fh:
-            box = json.load(fh)
-        return box['center'], box['size']
-    # fallback: static box from YAML
-    return cfg['docking_params']['center'], cfg['docking_params']['size']
 
 
-def _single_dock(cfg, rec, lig, is_native):
-    """Run one Smina docking. Return (success, log_file, elapsed_s)."""
-    outdir = Path(cfg['paths']['output_folder'])
-    rec_id, lig_id = Path(rec).stem, Path(lig).stem
-    tag = 'native' if is_native else 'dock'
-    out_base = outdir / f"{lig_id}__to__{rec_id}__{tag}"
 
-    center, size = _load_box(rec, cfg)
-    p = cfg['docking_params']
+def _dock_one_wrapper(args):
+    return _dock_one(*args)
 
+def _dock_one(cfg, receptor, ligand, autobox_ligand, out_file, log_file):
     cmd = [
-        cfg['paths']['smina_path'],
-        '--receptor', rec,
-        '--ligand',   lig,
-        '--out', str(out_base.with_suffix('.pdbqt')),
-        '--log', str(out_base.with_suffix('.log')),
-        '--exhaustiveness', str(p['exhaustiveness']),
-        '--num_modes',      str(p['num_modes']),
-        '--cpu',            str(p['cpu']),
-        '--center_x', str(center[0]), '--center_y', str(center[1]), '--center_z', str(center[2]),
-        '--size_x',   str(size[0]),   '--size_y',   str(size[1]),   '--size_z',   str(size[2]),
+        cfg["paths"]["smina_path"],
+        "--receptor", str(receptor),
+        "--ligand", str(ligand),
+        "--autobox_ligand", str(autobox_ligand),
+        "--autobox_add", str(cfg["docking_params"]["autobox_add"]),
+        "--exhaustiveness", str(cfg["docking_params"]["exhaustiveness"]),
+        "--num_modes", str(cfg["docking_params"]["num_modes"]),
+        "--cpu", str(cfg["docking_params"]["cpu"]),
+        "--out", str(out_file),
+        "--log", str(log_file)
     ]
-    if is_native:
-        cmd += ['--autobox_ligand', lig, '--autobox_add', str(p['autobox_add'])]
 
-    t0 = time.perf_counter()
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    elapsed = time.perf_counter() - t0
-    ok = files_ok(out_base.parent)    # 3‑file sanity check
-    return ok, str(out_base.with_suffix('.log')), elapsed
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-# ── public API ───────────────────────────────────────
-def _build_tasks(recs, ligs, cfg):
-    recs = sorted(Path(cfg['paths']['receptors_folder']).glob('*.pdbqt'))
-    native_lgs = sorted(Path(cfg['paths']['native_ligands_folder']).glob('*.pdbqt'))
-    test_lgs = sorted(Path(cfg['paths']['ligands_folder']).glob('*.pdbqt'))
 
-    # tasks builder
-    if cfg['docking_mode'] == 'redock_native':
-        tasks = [(cfg, str(r), str(l), True) for r, l in zip(recs, native_lgs)]
-    elif cfg['docking_mode'] == 'diagonal':
-        tasks = [(cfg, str(r), str(t), False) for r, t in zip(recs, test_lgs)]
-    else:  # full_matrix
-        tasks = [(cfg, str(r), str(t), False) for r in recs for t in test_lgs]
+def _build_tasks(cfg):
+    mode = cfg["docking_mode"]
+    rec_dir = Path(cfg["paths"]["receptors_cleaned_folder"])
+    lig_dir = Path(cfg["paths"]["ligands_folder"])
+    nat_dir = Path(cfg["paths"]["native_ligands_folder"])
+    out_dir = Path(cfg["paths"]["output_folder"])
+
+    recs = sorted(rec_dir.glob("*.pdbqt"))
+    ligs = sorted(lig_dir.glob("*.pdbqt"))
+
+    nats_by_pdbid = {}
+    for nat in nat_dir.glob("*.pdbqt"):
+        parts = nat.stem.split("_")
+        if len(parts) >= 2:
+            pdbid = parts[0]
+            nats_by_pdbid[pdbid] = nat
+
+    tasks = []
+
+    if mode == "redock_native":
+        for pdbid, native in nats_by_pdbid.items():
+            rec = rec_dir / f"{pdbid}.pdbqt"
+            lig_id = native.stem.replace(f"{pdbid}_", "")
+            if rec.exists():
+                out = out_dir / f"{pdbid}__{lig_id}__native_redock.pdbqt"
+                log = out_dir / f"{pdbid}__{lig_id}__native_redock.log"
+                tasks.append((cfg, rec, native, native, out, log))
+
+    elif mode == "diagonal":
+        for lig in ligs:
+            pdbid = lig.stem.split("_")[0]
+            lig_id = lig.stem
+            rec = rec_dir / f"{pdbid}.pdbqt"
+            native = nats_by_pdbid.get(pdbid)
+            if rec.exists() and native:
+                out = out_dir / f"{pdbid}__{lig_id}__test_dock.pdbqt"
+                log = out_dir / f"{pdbid}__{lig_id}__test_dock.log"
+                tasks.append((cfg, rec, lig, native, out, log))
+
+    elif mode == "full_matrix":
+        for rec in recs:
+            pdbid = rec.stem
+            native = nats_by_pdbid.get(pdbid)
+            if not native:
+                continue
+            for lig in ligs:
+                lig_id = lig.stem
+                out = out_dir / f"{pdbid}__{lig_id}__test_dock__.pdbqt"
+                log = out_dir / f"{pdbid}__{lig_id}__test_dock__.log"
+                tasks.append((cfg, rec, lig, native, out, log))
+
+    return tasks
+
 
 
 def run_batch_docking(cfg, log):
-    recs = sorted(Path(cfg['paths']['receptors_folder']).glob('*.pdbqt'))
-    ligs = sorted(Path(cfg['paths']['ligands_folder']).glob('*.pdbqt'))
-    tasks = _build_tasks([str(r) for r in recs], [str(l) for l in ligs], cfg)
+    tasks = _build_tasks(cfg)
+    log.info("Dokowanie %d kompleksów...", len(tasks))
 
-    if not tasks:
-        log.error("No receptors or ligands found – aborting.")
-        return
+    for args in tqdm(tasks):
+        try:
+            print(f"[DOCKING] {args[1].name} vs {args[2].name} ...")  # receptor vs ligand
 
-    log.info(f"{len(tasks)} docking jobs (mode={cfg['docking_mode']})")
+            _dock_one(*args)
+        except Exception as e:
+            print(f"❌ Error in docking {args}: {e}")
 
-    failed, done = [], []
-    with ProcessPoolExecutor(max_workers=cfg['runtime']['n_jobs']) as pool:
-        for ok, logfile, t in tqdm(pool.map(lambda args: _single_dock(*args), tasks),
-                                   total=len(tasks), desc='Docking'):
-            log.info(f"{logfile}  –  {'OK' if ok else 'FAIL'}  ({t:.1f}s)")
-            (done if ok else failed).append(logfile)
 
-    # ── automatic retry for failed jobs ──
-    if failed:
-        log.warning(f"Retrying {len(failed)} failed jobs …")
-        retry_tasks = [tsk for tsk in tasks
-                       if Path(tsk[2]).stem in {Path(f).stem.split('__')[0] for f in failed}]
-        with ProcessPoolExecutor(max_workers=cfg['runtime']['n_jobs']) as pool:
-            for ok, logfile, t in tqdm(pool.map(lambda args: _single_dock(*args), retry_tasks),
-                                       total=len(retry_tasks), desc='Retry'):
-                log.info(f"RETRY {logfile}  –  {'OK' if ok else 'FAIL'}  ({t:.1f}s)")

@@ -1,5 +1,7 @@
+
 paths:
   receptors_folder: "data/receptors"
+  receptors_cleaned_folder: "data/receptors_cleaned"
   native_ligands_folder: "data/native_ligands"
   ligands_folder: "data/ligands"
   output_folder: "data/output"
@@ -7,17 +9,15 @@ paths:
   temp_dir: "tmp"
   smina_path: "/usr/local/bin/smina"
 
-
-
 runtime:
-  n_jobs: 8              # parallel processes
+  n_jobs: 1          # parallel processes
   keep_tmp: false
 
 # ───── Docking mode ─────
 #  full_matrix     – every ligand vs every receptor
 #  diagonal        – only matching rows in complexes.csv (R_i ↔ L_i)
 #  redock_native   – only native ligands (validation)
-docking_mode: "full_matrix"
+docking_mode: "redock_native"
 
 
 engine: "smina"
@@ -26,12 +26,25 @@ engine: "smina"
 
 # global defaults (can be overridden per‑receptor by gridbox_generator)
 docking_params:
-  exhaustiveness: 32
+  exhaustiveness: 8
   num_modes: 10
-  cpu: 4
+  cpu: 1
   autobox_add: 4.0       # Å margin
   center: [0.0, 0.0, 0.0]
   size:   [20.0, 20.0, 20.0]
 
+fetch_crystals:
+  enabled: true
+  pdb_ids: ["1M17"]
+  ligand_resnames:
+    1M17: "AQ4"
+
+ligand_csv:
+  enabled: false          # set true when you have a CSV
+  file: "my_ligands.csv"
+  smiles_column: "SMILES"
+  id_column: "ID"
+
 postprocess:
-  native_margin: 0.5     # kcal/mol – score must be < native − margin
+  native_margin: 0.5
+  top_n: 20

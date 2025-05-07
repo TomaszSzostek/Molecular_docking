@@ -7,12 +7,15 @@ dependencies:
   - python=3.12
   - rdkit
   - pdbfixer
+  - numpy
+  - biopython
   - pandas
   - pyyaml
   - tqdm
   - matplotlib
   - scikit-learn
   - requests
+  - pyarrow
   - pip
   - pip:
       - AutoDockTools_py3
