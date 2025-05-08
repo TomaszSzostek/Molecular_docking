@@ -17,7 +17,7 @@ runtime:
 #  full_matrix     – every ligand vs every receptor
 #  diagonal        – only matching rows in complexes.csv (R_i ↔ L_i)
 #  redock_native   – only native ligands (validation)
-docking_mode: "redock_native"
+docking_mode: redock_native
 
 
 engine: "smina"
@@ -26,12 +26,17 @@ engine: "smina"
 
 # global defaults (can be overridden per‑receptor by gridbox_generator)
 docking_params:
-  exhaustiveness: 8
-  num_modes: 10
-  cpu: 1
-  autobox_add: 4.0       # Å margin
-  center: [0.0, 0.0, 0.0]
-  size:   [20.0, 20.0, 20.0]
+  default:                # ← obowiązuje dla wszystkich trybów
+    num_modes: 10
+    exhaustiveness: 8
+    autobox_add: 4        # Å – typowa wartość Sminy
+    cpu: 1
+
+  redock_native:          # ← nadpisuje default, gdy docking_mode=redock_native
+    num_modes: 1
+    exhaustiveness: 8
+    autobox_add: 2        # ciaśniejszy box
+
 
 fetch_crystals:
   enabled: true
