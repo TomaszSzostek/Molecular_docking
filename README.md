@@ -8,7 +8,8 @@ A production‑ready, parallel **molecular‑docking workflow** (Smina + AutoDo
 * **Three docking modes** – `full_matrix`, `diagonal`, `redock_native`.
 * **Automatic COM grid boxes** around native ligands.
 * **Parallel execution** with live progress bar and auto‑retry of failed jobs.
-* **Full results export** (all poses) + Top‑N summary + optional RMSD histogram.
+* **Full results export** (all poses) + Top‑N summary 
+* **Poses visualization and RMSD calculation** for redocked native ligands. 
 
 ---
 ## 🚀 Start
@@ -16,7 +17,7 @@ A production‑ready, parallel **molecular‑docking workflow** (Smina + AutoDo
 * Linux/macOS/WSL (Windows only if Smina/Vina compiled).  
 * Conda ≥ 4.10.
 * Install Smina separately (e.g. Homebrew or system binary) and set smina_path in config.yaml”
-* Install AutoDockTools separately (from available in the time git repository)
+* Install AutoDockTools separately (from available git repository)
 
 ## 📦 Installation
 ### 1 Clone AutoDockTools_py3 locally
@@ -50,41 +51,43 @@ project_root/
 ├── docking_pipeline/          
 │   ├── __init__.py
 │   ├── main.py
-│   ├── config.yaml           
-│   │
-│   ├── utils/
-│   │   ├── __init__.py
-│   │   ├── file_utils.py
-│   │   └── validation.py
-│   │
-│   ├── prepare/
-│   │   ├── __init__.py
-│   │   ├── adt_preparator.py  
-│   │   ├── gridbox_generator.py
-│   │   └── fetch_crystals.py
-│   │
-│   ├── dock/
-│   │   ├── __init__.py
-│   │   └── docking.py
-│   │
-│   └── analyze/
-│       ├── __init__.py
-│       ├── results_extractor.py
-│       └── postprocess.py
-│
-├── environment.yml           
+│   ├── config.yaml  
+│   │── environment.yml
+│   └── data/                    
+│      ├── receptors/            
+│      ├── native_ligands/        
+│      ├── ligands/              
+│      └── output/               
+│          ├── *.pdbqt
+│          ├── *.log
+│          ├── results.parquet
+│          ├── poses_min_max.csv
+│          ├── hits_vs_native.csv
+│          └── run.log
+│   
+├── utils/
+│   ├── __init__.py
+│   ├── file_utils.py
+│   └── validation.py
+│   
+├── prepare/
+│   ├── __init__.py
+│   ├── adt_preparator.py  
+│   ├── smlies_loader.py
+│   └── fetch_crystals.py
+│   
+├── dock/
+│   ├── __init__.py
+│   └── docking.py
+│   
+├── analyze/
+│   ├── __init__.py
+│   ├── results_extractor.py
+│   ├── RMSD.py
+│   └── postprocess.py
+│          
 ├── README.md
-└── data/                    
-    ├── receptors/            
-    ├── native_ligands/        
-    ├── ligands/              
-    └── output/               
-         ├── *.pdbqt
-         ├── *.log
-         ├── results.parquet
-         ├── poses_min_max.csv
-         ├── hits_vs_native.csv
-         └── run.log
+
 ```
 
 ## 🧬 Quick run  
