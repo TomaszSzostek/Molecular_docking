@@ -20,7 +20,7 @@
 ## 📦 Quick install
 
 ```bash
-  git clone https://github.com/<you>/molecular-docking.git
+  git clone https://github.com/TomaszSzostek/Molecular_docking.git
   cd molecular-docking
 
   # 1. Conda is recommended
@@ -73,10 +73,10 @@ Switch to **diagonal** or **full\_matrix** in the YAML to explore cross‑dockin
 ## ⚙️ Configuration (`config.yaml`)
 
 ```yaml
-docking_mode: redock_native   # or diagonal/matrix/full_matrix
+docking_mode: redock_native   # or diagonal/full_matrix
 
 ligand_csv:
-  enabled: true               # set true when you have a CSV
+  enabled: true               # set true when you have a CSV with test ligands, applicable for full_matrix and diagonal modes.
   file: data/ligands/smiles.csv
   smiles_column: SMILES
   id_column: ID
@@ -90,7 +90,6 @@ paths:
   output_folder: results
   smina_path: /usr/local/bin/smina
   adt_root:  /opt/AutoDockTools
-  pymol_path: /Applications/PyMOL.app/Contents/MacOS/PyMOL
   
 docking_params:
   default:
@@ -143,7 +142,7 @@ If you find this pipeline useful in your research, please cite:
   author  = Tomasz Szostek,
   title   = Molecular docking pipeline,
   year    = 2025,
-  url     = {https://github.com/TomaszSzostek/Molecular_docking.git}
+  url     = https://github.com/TomaszSzostek/Molecular_docking.git
 }
 ```
 
