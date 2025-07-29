@@ -138,12 +138,12 @@ Make sure to run `black .` and `ruff --fix .` before committing.
 If you find this pipeline useful in your research, please cite:
 
 ```
-@software{docking_pipeline_2025,
+
   author  = Tomasz Szostek,
   title   = Molecular docking pipeline,
   year    = 2025,
   url     = https://github.com/TomaszSzostek/Molecular_docking.git
-}
+
 ```
 
 ---
