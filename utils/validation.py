@@ -1,9 +1,13 @@
 from pathlib import Path
 import numpy as np
 
-def files_ok(dir_: Path):
-    req = ["poses.pdbqt", "log.txt", "atom_terms.txt"]
-    return all((dir_/f).is_file() and (dir_/f).stat().st_size > 0 for f in req)
+def files_ok(lig_path: Path) -> bool:
+    """Check if docking output files exist for a ligand."""
+    stem = lig_path.stem
+    log_file = lig_path.with_suffix(".log")
+    pdbqt_out = lig_path  # already ends with .pdbqt
+    return pdbqt_out.exists() and log_file.exists() and pdbqt_out.stat().st_size > 0
+
 
 def rmsd_atoms(ref_pdb: str, pose_pdb: str) -> float:
     """Very simple heavy‑atom RMSD (BioPython-free to keep deps light)."""

@@ -1,0 +1,82 @@
+# ───── Docking mode ─────
+#  full_matrix     – every ligand vs every receptor
+#  diagonal        – only matching rows in complexes.csv (R_i ↔ L_i)
+#  redock_native   – only native ligands (validation)
+docking_mode: full_matrix
+
+engine: "smina"
+
+
+ligand_csv:
+  enabled: true                     # set true when you have a CSV with test ligands, applicable for full_matrix and diagonal modes.
+  file: "data/ligands/smiles.csv"
+  smiles_column: "SMILES"
+  id_column: "ID"
+
+
+paths:
+  receptors_folder: "data/receptors"
+  receptors_cleaned_folder: "data/receptors_cleaned"
+  native_ligands_folder: "data/native_ligands"
+  ligands_folder: "data/ligands"
+  output_folder: "results"
+  crystals_folder: "data/crystals"
+  temp_dir: "tmp"
+  smina_path: "/usr/local/bin/smina"
+  visuals: "results/visuals"
+
+
+runtime:
+  n_jobs: 1          # parallel processes
+  keep_tmp: false
+
+
+# global defaults (can be overridden per‑receptor by gridbox_generator)
+docking_params:
+  default:
+    num_modes: 10
+    exhaustiveness: 8
+    autobox_add: 4
+    cpu: 1
+
+  redock_native:
+    num_modes: 1                                     # Do not change it. You need 1 pose for RSMD calculations
+    exhaustiveness: 8
+    autobox_add: 2
+
+
+fetch_crystals:
+  enabled: true
+  pdb_ids:                                           # PDB IDs of the crystal native structures
+    ['1M17', '2ITO', "4I23", '4LQM', '7AEM', '8UDR', '5XV7', '6MX8', '4MKC', '2XP2', '5FTO', '3ZBF', '8GUA', '2UZU', '2UZT', '4EKL', '5OQ4', '5L2S', '5L2I', '5L2T']
+  ligand_resnames:                                   # Ligand resnames of the protein crystal structures
+    1M17: 'AQ4'
+    2ITO: 'IRE'
+    4I23: '1C9'
+    4LQM: 'DJK'
+    7AEM: '6GY'
+    8UDR: 'MOV'
+    5XV7: 'EMH'
+    6MX8: '6GY'
+    4MKC: '4MK'
+    2XP2: 'VGH'
+    5FTO: 'YMX'
+    3ZBF: 'VGH'
+    8GUA: '1LT'
+    2UZU: 'L20'
+    2UZT: 'SS3'
+    4EKL: '0RF'
+    5KCV: '6S1'
+    5OQ4: 'A3W'
+    5L2S: '6ZV'
+    1XO2: 'FSE'
+    5L2I: 'LQQ'
+    5L2T: '6ZZ'
+    7SJ3: '6ZV'
+
+postprocess:
+  native_margin: 0.5
+  top_n: 20
+
+
+
