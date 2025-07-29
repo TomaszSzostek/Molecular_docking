@@ -1,6 +1,6 @@
 # Molecular Docking Pipeline
 
-> \*\*Fast, idempotent & fully‑scriptable molecular docking workflow built around [Smina](https://github.com/mwojcikowski/smina) + AutoDockTools (py3).
+> **Fast**, idempotent & fully‑scriptable molecular docking workflow built around [Smina](https://github.com/mwojcikowski/smina) + AutoDockTools (py3).
 > From raw PDB IDs & SMILES to ranked hits, RMSD overlays and publication‑ready interactive visualisations — in **one command**.
 
 ---
