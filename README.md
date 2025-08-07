@@ -126,12 +126,6 @@ runtime:
 
 
 
-## 🤝 Contributing
-
-Pull requests are welcome! Please open an issue first to discuss major changes.
-Make sure to run `black .` and `ruff --fix .` before committing.
-
----
 
 ## 📣 Citation
 
