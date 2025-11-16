@@ -73,6 +73,13 @@ def prepare_inputs(cfg, log):
     if not list(nat_dir.glob("*.pdbqt")):
         log.info("→ Converting native ligands to PDBQT...")
         for pdb in nat_dir.glob("*.pdb"):
+            stem = pdb.stem  # e.g. '6SCM_HOH'
+            parts = stem.split("_")
+            resname = parts[1].upper() if len(parts) > 1 else ""
+            # Skip water or obvious non-druglike pseudo‑ligands
+            if resname in {"HOH", "WAT"}:
+                log.info("→ Skipping water pseudo‑ligand %s", pdb.name)
+                continue
             ligand_to_pdbqt(pdb, nat_dir, sanitize=False)
     else:
         log.info("→ Native ligand PDBQT files already exist – skipping conversion.")
@@ -100,7 +107,6 @@ def main():
 
     if mode == "redock_native":
         cfg["paths"]["active_ligands_folder"] = cfg["paths"]["native_ligands_folder"]
-        cfg["docking_params"]["num_modes"] = 1
     elif mode in {"diagonal", "matrix", "full_matrix"}:
         cfg["paths"]["active_ligands_folder"] = cfg["paths"]["ligands_folder"]
     else:

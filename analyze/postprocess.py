@@ -7,7 +7,14 @@ affinity margin.
 """
 
 from pathlib import Path
+from typing import Optional, Set
+
+import numpy as np
 import pandas as pd
+
+from analyze import RMSD
+
+RMSD_THRESHOLD = 2.0
 
 
 def rank_vs_native(cfg: dict, log) -> None:
@@ -77,14 +84,98 @@ def rank_vs_native(cfg: dict, log) -> None:
         df[df["is_native"] == False]
         .merge(native_scores, on="receptor", how="left")
     )
+    rmsd_map = _native_rmsd_by_receptor(cfg, log)
+    if rmsd_map is not None:
+        hits = hits.merge(rmsd_map, on="receptor", how="left")
+        hits = hits[hits["native_rmsd"].notna()]
+        hits = hits[hits["native_rmsd"] <= RMSD_THRESHOLD]
+    else:
+        log.warning("RMSD summary missing – cannot filter receptors by <=2Å.")
 
     # Select ligands beating native by at least margin
     hits = hits[hits["min_affinity"] <= hits["native_score"] - margin]
+
+    # Compute pose stability RMSD for each hit
+    hits["pose_stability_rmsd"] = hits.apply(
+        lambda row: _pose_stability_rmsd(row, out_dir, log), axis=1
+    )
+
+    # Drop internal-only columns
+    hits = hits.drop(columns=["is_native"], errors="ignore")
 
     # Save filtered hits to CSV
     hits_path = out_dir / "better_than_native.csv"
     hits.to_csv(hits_path, index=False)
 
-    log.info(f"Found {len(hits)} ligands better than native.")
+    log.info(f"Found {len(hits)} ligands better than native with stable natives.")
     log.info(f"Saved filtered results → {hits_path}")
 
+
+def _native_rmsd_by_receptor(cfg: dict, log) -> Optional[pd.DataFrame]:
+    """
+    Load native redock RMSD summary and map receptor -> RMSD value.
+    """
+    # RMSD summary is stored in the main results folder (sibling of visuals)
+    summary_fp = Path(cfg["paths"]["output_folder"]) / "rmsd_summary.csv"
+    if not summary_fp.exists():
+        log.warning("rmsd_summary.csv not found at %s", summary_fp)
+        return None
+    df = pd.read_csv(summary_fp)
+    if "Complex" not in df.columns or "RMSD" not in df.columns:
+        log.warning("rmsd_summary.csv missing required columns.")
+        return None
+    def _extract_receptor(label: str) -> Optional[str]:
+        """
+        Extract receptor ID from Complex label '<rec>__<lig>__native_redock'.
+        """
+        parts = str(label).split("__")
+        return parts[0] if len(parts) >= 3 else None
+    df["receptor"] = df["Complex"].apply(_extract_receptor)
+    df = df.dropna(subset=["receptor"])
+    if df.empty:
+        return None
+    mapped = (
+        df.groupby("receptor")["RMSD"]
+        .min()
+        .reset_index()
+        .rename(columns={"RMSD": "native_rmsd"})
+    )
+    return mapped
+
+
+def _pose_stability_rmsd(row, out_dir: Path, log) -> Optional[float]:
+    """
+    Calculate RMSD spread of docking poses for a ligand (lower = more stable).
+    """
+    pdbqt_fp = _find_pose_file(out_dir, row["receptor"], row["ligand"], row["mode"])
+    if not pdbqt_fp:
+        log.debug("Pose file not found for %s__%s__%s", row["receptor"], row["ligand"], row["mode"])
+        return None
+    try:
+        models = RMSD.read_pdbqt_models(pdbqt_fp)
+    except Exception as exc:
+        log.debug("Failed to read models from %s: %s", pdbqt_fp, exc)
+        return None
+    if len(models) <= 1:
+        return 0.0
+    ref_names, _, ref_xyz = models[0]
+    rms_values = []
+    for names, _, xyz in models[1:]:
+        amap = RMSD._map_by_name(ref_names, names)
+        if len(amap) < RMSD.MIN_COMMON_ATOMS:
+            continue
+        p_idx, r_idx = zip(*amap)
+        rmsd, _ = RMSD._kabsch(xyz[list(p_idx)], ref_xyz[list(r_idx)])
+        rms_values.append(rmsd)
+    if not rms_values:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(rms_values))))
+
+
+def _find_pose_file(out_dir: Path, receptor: str, ligand: str, mode: str) -> Optional[Path]:
+    """
+    Locate the PDBQT file storing all poses for (receptor, ligand, mode).
+    """
+    pattern = f"{receptor}__{ligand}__{mode}.pdbqt"
+    matches = list(out_dir.rglob(pattern))
+    return matches[0] if matches else None

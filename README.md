@@ -20,18 +20,18 @@
 ## 📦 Quick install
 
 ```bash
-  git clone https://github.com/TomaszSzostek/Molecular_docking.git
-  cd molecular-docking
+git clone https://github.com/TomaszSzostek/Molecular_docking.git
+cd Molecular_docking
 
-  # 1. Conda is recommended
-  conda env create -f environment.yaml
-  conda activate docking
+# 1. Create Conda environment
+conda env create -f environment.yml
+conda activate docking
 
-  # 2. Over‑the‑air tools
-  # (edit paths in config.yaml if you install elsewhere)
-  pip install smina
-  # GUI PyMOL (on macOS)
-  brew install --cask pymol
+# 2. Install external tools (optional, system‑wide)
+# Smina binaries (or use your own build)
+#   https://github.com/mwojcikowski/smina
+# PyMOL for 3D inspection (example for macOS)
+#   brew install --cask pymol
 ```
 
 
@@ -52,55 +52,61 @@ Switch to **diagonal** or **full\_matrix** in the YAML to explore cross‑dockin
 ## 🗂️ Directory layout (after first run)
 
 ```
-├── config.yaml
-├── data/
+├── run_pipeline/config.yaml
+├── run_pipeline/data/
 │   ├── crystals/           # raw .pdb from RCSB
-│   ├── receptors/          # cleaned PDB
-│   ├── receptors_qt/       # PDBQT ready for Smina
-│   ├── ligands/            # test ligands (PDBQT) computed from smiles csv
-│   └── native_ligands/     # native co‑crystallised ligands (PDBQT)
-├── results/
-│   ├── dock_native/        # *.pdbqt + .log for each dock
-│   ├── matrix/
-│   ├── visuals/            # RMSD plots, SVG overlays, Py3Dmol files
-│   ├── results.csv         # consolidated docking table 
-│   └── 3D_visuals          # Jupiter notebook for interactive docking results visualizations 
-└── run.log
+│   ├── receptors/          # cleaned PDB (PDB)
+│   ├── receptors_cleaned/  # PDBQT ready for Smina
+│   ├── ligands/            # test ligands (PDBQT) from ligands.csv
+│   └── native_ligands/     # native co‑crystallised ligands (PDB/PDBQT)
+├── run_pipeline/results/
+│   ├── dock_native/        # *.pdbqt + .log for native redocks
+│   ├── matrix/             # *.pdbqt + .log for full_matrix / diagonal runs
+│   ├── visuals/            # RMSD plots, overlays, 2D boards
+│   ├── results.csv         # consolidated docking table
+│   ├── rmsd_summary.csv    # per‑receptor RMSD statistics
+│   └── better_than_native.csv
+└── run_pipeline/run.log
 ```
 
 ---
 
-## ⚙️ Configuration (`config.yaml`)
+## ⚙️ Configuration (`run_pipeline/config.yaml`)
 
 ```yaml
 docking_mode: redock_native   # or diagonal/full_matrix
 
 ligand_csv:
-  enabled: true               # set true when you have a CSV with test ligands, applicable for full_matrix and diagonal modes.
-  file: data/ligands/smiles.csv
-  smiles_column: SMILES
-  id_column: ID
+  enabled: true               # set true when you have a CSV with test ligands (full_matrix/diagonal)
+  file: "data/ligands/ligands.csv"
+  smiles_column: "SMILES"
+  id_column: "ID"
 
 paths:
-  receptors_folder: data/receptors
-  receptors_cleaned_folder: data/receptors_qt
-  crystals_folder: data/crystals
-  ligands_folder: data/ligands
-  native_ligands_folder: data/natives
-  output_folder: results
-  smina_path: /usr/local/bin/smina
-  adt_root:  /opt/AutoDockTools
-  
+  receptors_folder: "data/receptors"
+  receptors_cleaned_folder: "data/receptors_cleaned"
+  native_ligands_folder: "data/native_ligands"
+  ligands_folder: "data/ligands"
+  output_folder: "results"
+  crystals_folder: "data/crystals"
+  temp_dir: "tmp"
+  smina_path: "/usr/local/bin/smina"
+  visuals: "results/visuals"
+
 docking_params:
   default:
-    exhaustiveness: 8
-    num_modes: 9
+    num_modes: 6
+    exhaustiveness: 16
+    autobox_add: 1
+
   redock_native:
+    num_modes: 12
+    exhaustiveness: 16
     autobox_add: 4
     
 runtime:
-  n_jobs: 4                  # CPU threads for Smina
-
+  pool_size: 6               # concurrent docking workers
+  cpu_per_job: 1             # threads passed to Smina via --cpu
 ```
 
 ---
@@ -117,9 +123,22 @@ runtime:
 | **`analyze.postprocess`**             | `rank_vs_native`                       | Flag ligands that beat the native by an affinity margin.           |
 | **`analyze.RMSD`**                    | `run_rmsd_and_plot`                    | Kabsch RMSD vs native + 2‑D overlay (RDKit).                       |
 | **`analyze.files_for_visualization`** | `generate_files`                       | Prep Py3Dmol & Jupyter‑friendly files for manual inspection.       |
+| **`visualize_2d`**                    | `python -m visualize_2d --complex …`   | Pastel 2D PoseView‑style protein–ligand interaction boards.        |
 | **`utils.file_utils`**                | `ensure_dirs`, `setup_logging`         | Small helpers for filesystem & logging.                            |
 | **`utils.validation`**                | `files_ok`, `rmsd_atoms`               | Lightweight success checks.                                        |
 | **`run_pipeline.main`**               | `main()`                               | Glue everything together.                                          |
+
+### ✨ Pastel 2D interaction boards
+
+After running the pipeline (which produces `results/visuals/complex__<mode>__...` folders), you can render custom 2D diagrams:
+
+```
+python -m visualize_2d \
+  --complex run_pipeline/results/visuals/complex__matrix__1M17__1 \
+  --out run_pipeline/results/visuals/2d_boards/1M17__1.png
+```
+
+The renderer blends RDKit stick figures, PLIP interactions and a pastel UI kit. Outputs can be `png` or `svg` and embed the auto-generated 3D snapshot if present.
 
 ---
 

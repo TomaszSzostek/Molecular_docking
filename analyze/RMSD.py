@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 """
 RMSD.py
 
@@ -6,20 +6,11 @@ Compute heavy‑atom RMSD and generate 2D overlay images between docked and nati
 
 This module implements:
   1. Direct Kabsch RMSD calculation on PDBQT coordinates to avoid ring/bond-order issues.
-  2. Optional outlier refinement when RMSD exceeds threshold.
-  3. Conversion of PDBQT to clean PDB for RDKit drawing.
-  4. RDKit-based 2D overlay generation saved as SVG/PNG/PDF.
-  5. Summary CSV with columns: RMSD_refined, n_common, n_common_refined.
-
-Public API:
-    run_rmsd_and_plot(cfg: dict, log: logging.Logger)
-
-Configuration:
-    cfg["paths"]["native_ligands_folder"] : Path to native ligands (.pdb or .pdbqt)
-    cfg["paths"]["output_folder"]         : Path where docking PDBQT outputs live
-    cfg["paths"]["visuals"]               : Path to write overlays and summary CSV
+  2. Conversion of PDBQT to clean PDB for RDKit drawing.
+  3. RDKit-based 2D overlay generation saved as SVG/PNG/PDF.
+  4. Summary CSV with columns: RMSD, n_common, n_ref.
 """
-
+from __future__ import annotations
 from pathlib import Path
 import re
 import logging
@@ -27,7 +18,25 @@ from typing import List, Tuple, Dict
 
 import numpy as np
 import pandas as pd
-import cairosvg
+try:
+    import cairosvg
+except Exception:  # pragma: no cover
+    class _CairoStub:
+        def __init__(self):
+            self._warned = False
+
+        def _warn(self):
+            if not self._warned:
+                print("[RMSD] Warning: cairosvg/cairo backend missing – skipping raster/pdf export.")
+                self._warned = True
+
+        def svg2png(self, *args, **kwargs):
+            self._warn()
+
+        def svg2pdf(self, *args, **kwargs):
+            self._warn()
+
+    cairosvg = _CairoStub()
 
 # ─────────────────────── RDKit only for drawing ───────────────────────
 try:
@@ -43,7 +52,6 @@ from rdkit.Chem.Draw import rdMolDraw2D
 
 # ───────────────────────────── Constants ─────────────────────────────────
 MIN_COMMON_ATOMS = 4          # Minimum number of shared atoms for RMSD
-REFINE_KEEP_PERCENT = 80      # Percent of atom pairs to keep after outlier removal
 
 _PERIODIC = {
     "H","He","Li","Be","B","C","N","O","F","Ne","Na","Mg","Al","Si","P","S","Cl","Ar",
@@ -155,61 +163,123 @@ def _kabsch(P: np.ndarray, Q: np.ndarray):
     return rmsd, dists
 
 
-def _refine_map_by_distance(ref_xyz: np.ndarray, pred_xyz: np.ndarray,
-                            amap: List[Tuple[int,int]],
-                            keep_percent=REFINE_KEEP_PERCENT):
-    """
-    Remove outlier atom pairs based on distance percentile threshold.
-    """
-    p_idx, r_idx = zip(*amap)
-    P = pred_xyz[list(p_idx)]
-    Q = ref_xyz[list(r_idx)]
-    _, d = _kabsch(P, Q)
-    thr = np.percentile(d, keep_percent)
-    return [pair for k, pair in enumerate(amap) if d[k] <= thr]
-
-
 def calc_rmsd_from_pdbqt(ref_fp: Path, pred_fp: Path,
                          heavy_only: bool = True) -> Dict[str, float|int|None]:
     """
     Compute RMSD metrics between native and predicted poses.
 
+    If the predicted file contains multiple poses (MODEL blocks),
+    the RMSD is evaluated for each pose separately and the BEST
+    (lowest) RMSD is reported. This reflects the standard practice
+    of selecting the closest pose among generated docking solutions.
+
     Returns dict with keys:
-      rmsd_full, n_common, n_ref, rmsd_refined, n_common_refined
+      rmsd_full, n_common, n_ref
     """
-    ref_names, _, ref_xyz     = _read_coords(ref_fp, heavy_only)
-    pred_names, _, pred_xyz   = _read_coords(pred_fp, heavy_only)
+    ref_names, _, ref_xyz = _read_coords(ref_fp, heavy_only)
 
-    amap = _map_by_name(ref_names, pred_names)
-    if len(amap) < MIN_COMMON_ATOMS:
-        if len(ref_xyz) == len(pred_xyz):
-            amap = [(i,i) for i in range(len(ref_xyz))]
-        else:
-            raise ValueError(f"Too few common atoms ({len(amap)}) between {ref_fp.name} and {pred_fp.name}")
+    # Try to treat predicted file as multi-model; fall back to single read
+    models = read_pdbqt_models(pred_fp, heavy_only=heavy_only)
+    if not models:
+        pred_names, _, pred_xyz = _read_coords(pred_fp, heavy_only)
+        models = [(pred_names, None, pred_xyz)]
 
-    # full RMSD
-    p_idx, r_idx = zip(*amap)
-    rmsd_full, _ = _kabsch(pred_xyz[list(p_idx)], ref_xyz[list(r_idx)])
+    best_rmsd: float | None = None
+    best_n_common: int = 0
 
-    # optional refined RMSD
-    rmsd_refined = None
-    n_common_refined = None
-    if rmsd_full > 2.0:
-        amap_ref = _refine_map_by_distance(ref_xyz, pred_xyz, amap)
-        if len(amap_ref) >= MIN_COMMON_ATOMS:
-            p2, r2 = zip(*amap_ref)
-            rms2, _ = _kabsch(pred_xyz[list(p2)], ref_xyz[list(r2)])
-            if rms2 < rmsd_full:
-                rmsd_refined = rms2
-                n_common_refined = len(amap_ref)
+    for pred_names, _, pred_xyz in models:
+        amap = _map_by_name(ref_names, pred_names)
+        if len(amap) < MIN_COMMON_ATOMS:
+            # allow 1:1 mapping if atom counts match exactly
+            if len(ref_xyz) == len(pred_xyz):
+                amap = [(i, i) for i in range(len(ref_xyz))]
+            else:
+                continue
+
+        p_idx, r_idx = zip(*amap)
+        rmsd_full, _ = _kabsch(pred_xyz[list(p_idx)], ref_xyz[list(r_idx)])
+
+        if best_rmsd is None or rmsd_full < best_rmsd:
+            best_rmsd = rmsd_full
+            best_n_common = len(amap)
+
+    if best_rmsd is None:
+        raise ValueError(f"Could not compute RMSD between {ref_fp.name} and {pred_fp.name}")
 
     return {
-        "rmsd_full": rmsd_full,
-        "n_common": len(amap),
+        "rmsd_full": best_rmsd,
+        "n_common": best_n_common,
         "n_ref": len(ref_xyz),
-        "rmsd_refined": rmsd_refined,
-        "n_common_refined": n_common_refined,
     }
+
+
+def read_pdbqt_models(path: Path, heavy_only: bool = True):
+    """
+    Split a multi-model PDBQT file into per-pose atom arrays.
+
+    Parameters
+    ----------
+    path : Path
+        PDBQT file produced by Smina (contains MODEL blocks).
+    heavy_only : bool
+        Drop hydrogens if True.
+
+    Returns
+    -------
+    list[tuple[np.ndarray, np.ndarray, np.ndarray]]
+        Sequence of (atom_names, elements, xyz) per pose.
+    """
+    models: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+    names: list[str] = []
+    elems: list[str] = []
+    coords: list[tuple[float, float, float]] = []
+    in_model = False
+
+    def _flush():
+        nonlocal names, elems, coords
+        if coords:
+            models.append(
+                (
+                    np.array(names, dtype=object),
+                    np.array(elems, dtype=object),
+                    np.asarray(coords, float),
+                )
+            )
+        names = []
+        elems = []
+        coords = []
+
+    for ln in path.read_text().splitlines():
+        if ln.startswith("MODEL"):
+            if in_model:
+                _flush()
+            in_model = True
+            continue
+        if not in_model:
+            continue
+        if ln.startswith("ENDMDL"):
+            _flush()
+            in_model = False
+            continue
+        if ln.startswith(("ATOM", "HETATM")):
+            an = ln[12:16]
+            el = _guess_element(an)
+            if heavy_only and el == "H":
+                continue
+            try:
+                x = float(ln[30:38])
+                y = float(ln[38:46])
+                z = float(ln[46:54])
+            except ValueError:
+                continue
+            names.append(an.strip())
+            elems.append(el)
+            coords.append((x, y, z))
+
+    if in_model:
+        _flush()
+
+    return models
 
 
 # ─────────────────────── PDBQT → PDB conversion ───────────────────────
@@ -325,8 +395,6 @@ def run_rmsd_and_plot(cfg: dict, log: logging.Logger) -> None:
         try:
             metrics = calc_rmsd_from_pdbqt(native_fp, dock, heavy_only=True)
             msg = f"RMSD={metrics['rmsd_full']:.3f} Å ({metrics['n_common']}/{metrics['n_ref']})"
-            if metrics['rmsd_refined'] is not None:
-                msg += f" | refined={metrics['rmsd_refined']:.3f} Å ({metrics['n_common_refined']} atoms)"
             log.info("%s: %s", stem, msg)
         except Exception as exc:
             log.error("RMSD error for %s: %s", dock.name, exc)
@@ -365,14 +433,13 @@ def run_rmsd_and_plot(cfg: dict, log: logging.Logger) -> None:
             "RMSD": metrics['rmsd_full'],
             "n_common": metrics['n_common'],
             "n_ref": metrics['n_ref'],
-            "RMSD_refined": metrics['rmsd_refined'],
-            "n_common_refined": metrics['n_common_refined'],
         })
 
     # Write summary CSV
     if rows:
         df = pd.DataFrame(rows).sort_values("RMSD")
-        summary_fp = vis_root / "rmsd_summary.csv"
+        # Save RMSD summary in the main results folder instead of visuals
+        summary_fp = vis_root.parent / "rmsd_summary.csv"
         df.to_csv(summary_fp, index=False)
         high = df[df.RMSD > 2.0]
         if not high.empty:

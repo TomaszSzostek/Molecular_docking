@@ -7,25 +7,13 @@ This module provides:
   - Resolving and merging default and mode‑specific docking parameters.
   - Single‑ligand docking invocation with proper Smina command‑line flags.
   - Generation of task lists for 'redock_native', 'diagonal' and 'full_matrix' modes.
-  - Sequential execution of all tasks with a progress bar.
-
-Public API:
-    run_batch_docking(cfg: dict, log: logging.Logger) -> None
-
-Configuration keys used:
-    cfg["docking_mode"]
-    cfg["docking_params"]
-    cfg["runtime"]["n_jobs"]
-    cfg["paths"]["smina_path"]
-    cfg["paths"]["receptors_cleaned_folder"]
-    cfg["paths"]["active_ligands_folder"]
-    cfg["paths"]["native_ligands_folder"]
-    cfg["paths"]["output_folder"]
+  - Parallel execution of docking tasks (multiprocessing) with progress bars.
 """
 
 from pathlib import Path
 from itertools import product
 import subprocess
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
 def _resolved_params(cfg) -> dict:
@@ -108,7 +96,7 @@ def _dock_one(cfg, receptor, ligand, autobox_ligand, out_file, log_file):
     _add_arg(cmd, "--autobox_add",    params.get("autobox_add"))
     _add_arg(cmd, "--exhaustiveness", params.get("exhaustiveness"))
     _add_arg(cmd, "--num_modes",      params.get("num_modes"))
-    _add_arg(cmd, "--cpu",            params.get("cpu", cfg["runtime"].get("n_jobs", 1)))
+    _add_arg(cmd, "--cpu",            params.get("cpu", cfg["runtime"].get("cpu_per_job", 1)))
 
     # execute Smina silently
     subprocess.run(cmd, check=True,
@@ -192,6 +180,28 @@ def _build_tasks(cfg):
 
     return tasks
 
+def _dock_task(task):
+    """
+    Helper wrapper so that ProcessPoolExecutor can call `_dock_one`.
+    Returns a tuple describing success for logging purposes.
+    """
+    try:
+        _dock_one(*task)
+        return True, str(task[4]), ""  # task[4] is out_file
+    except Exception as exc:
+        return False, str(task[4]), str(exc)
+
+
+def _run_tasks_sequential(tasks, log):
+    """
+    Execute docking tasks sequentially with a progress bar.
+    """
+    for task in tqdm(tasks, desc="Docking"):
+        success, _, err = _dock_task(task)
+        if not success:
+            log.error(f"Error during docking: {err}")
+
+
 def run_batch_docking(cfg, log):
     """
     Discover and execute all docking tasks for the current mode.
@@ -213,10 +223,19 @@ def run_batch_docking(cfg, log):
         log.info("Docking already performed– skipping...")
         return
 
-    # iterate through tasks with progress bar
-    for task in tqdm(tasks, desc="Docking"):
-        try:
-            _dock_one(*task)
-        except Exception as e:
-            log.error(f"Error during docking: {e}")
+    pool_size = max(1, int(cfg.get("runtime", {}).get("pool_size",
+                                                      cfg.get("runtime", {}).get("n_jobs", 1))))
+    if pool_size == 1:
+        _run_tasks_sequential(tasks, log)
+        return
+
+    log.info(f"→ Using multiprocessing with {pool_size} workers")
+    with ProcessPoolExecutor(max_workers=pool_size) as executor:
+        futures = [executor.submit(_dock_task, task) for task in tasks]
+        with tqdm(total=len(futures), desc="Docking", leave=True) as pbar:
+            for future in as_completed(futures):
+                success, out_file, err = future.result()
+                if not success:
+                    log.error(f"Error during docking for {out_file}: {err}")
+                pbar.update(1)
 

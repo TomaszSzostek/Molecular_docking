@@ -1,4 +1,4 @@
-from __future__ import annotations
+
 """Utility functions for downloading PDB crystal structures and splitting them
 into separate receptor/ligand PDB files.
 
@@ -9,7 +9,7 @@ disk are fetched and generated.
 It ensures correct ligand–receptor pairing by extracting the receptor chain
 that contains the selected ligand residue (even in symmetric dimers).
 """
-
+from __future__ import annotations
 import gzip
 import shutil
 from pathlib import Path
@@ -29,6 +29,9 @@ def _guess_biggest_het_ligand(pdb_file: Path) -> str:
         for line in fh:
             if line.startswith("HETATM"):
                 res = line[17:20].strip().upper()
+                # Ignore crystallographic waters when guessing ligand
+                if res in {"HOH", "WAT"}:
+                    continue
                 sizes[res] = sizes.get(res, 0) + 1
 
     if not sizes:
