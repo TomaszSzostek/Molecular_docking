@@ -145,12 +145,6 @@ The renderer blends RDKit stick figures, PLIP interactions and a pastel UI kit. 
 
 
 
-## 🤝 Contributing
-
-Pull requests are welcome! Please open an issue first to discuss major changes.
-Make sure to run `black .` and `ruff --fix .` before committing.
-
----
 
 ## 📣 Citation
 
