@@ -56,13 +56,9 @@ def parse_smina_log(log_path: Path) -> dict:
     # Determine if this is a native redock run
     is_native = "native" in mode.lower()
 
-    # Assign min/max affinities
+    # Assign min/max affinities from all poses
     if affinities:
-        if is_native:
-            # In native redock, only the first affinity is relevant
-            min_aff = max_aff = affinities[0]
-        else:
-            min_aff, max_aff = min(affinities), max(affinities)
+        min_aff, max_aff = min(affinities), max(affinities)
     else:
         # No affinities parsed
         min_aff = max_aff = None

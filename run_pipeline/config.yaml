@@ -29,17 +29,22 @@ runtime:
   cpu_per_job: 1      # threads per Smina process (give each worker its own core)
 
 
-# global defaults (can be overridden per‑receptor by gridbox_generator)
+# Docking parameters for Smina
+# Structure: 'default' applies to full_matrix and diagonal modes.
+#            'redock_native' overrides default values when docking_mode = redock_native
 docking_params:
+  # Base parameters (used for full_matrix and diagonal modes)
   default:
-    num_modes: 6
-    exhaustiveness: 16
-    autobox_add: 1
+    num_modes: 10          # Number of binding poses to generate (standard value)
+    exhaustiveness: 16     # Search thoroughness (higher = slower but more accurate)
+    autobox_add: 1         # Grid box padding around ligand (Angstroms)
 
+  # Overrides for native redocking (validation mode)
+  # These values are merged with 'default' when docking_mode = redock_native
   redock_native:
-    num_modes: 12           # generate multiple poses so RMSD can pick the best
-    exhaustiveness: 16      # deeper search to avoid getting stuck in local minima
-    autobox_add: 4          # slightly larger search box for flexible ligands
+    num_modes: 10          # More poses needed to select best RMSD match
+    exhaustiveness: 16    # Same as default
+    autobox_add: 4        # Larger box for flexible native ligands
 
 
 

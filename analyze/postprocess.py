@@ -71,12 +71,18 @@ def rank_vs_native(cfg: dict, log) -> None:
         log.warning("No native ligands found in results.csv.")
         return
 
-    # Compute the best (lowest) affinity of native per receptor
+    # Compute the best (lowest) and worst (highest) affinity of native per receptor
     native_scores = (
         native_df
-        .groupby("receptor")["min_affinity"]
-        .min()
-        .rename("native_score")
+        .groupby("receptor")
+        .agg({
+            "min_affinity": "min",  # best pose
+            "max_affinity": "max"    # worst pose
+        })
+        .rename(columns={
+            "min_affinity": "native_score",
+            "max_affinity": "native_max_affinity"
+        })
     )
 
     # Prepare test ligands by merging with native_score
@@ -121,7 +127,9 @@ def _native_rmsd_by_receptor(cfg: dict, log) -> Optional[pd.DataFrame]:
         log.warning("rmsd_summary.csv not found at %s", summary_fp)
         return None
     df = pd.read_csv(summary_fp)
-    if "Complex" not in df.columns or "RMSD" not in df.columns:
+    
+    rmsd_col = "RMSD_best" if "RMSD_best" in df.columns else "RMSD"
+    if "Complex" not in df.columns or rmsd_col not in df.columns:
         log.warning("rmsd_summary.csv missing required columns.")
         return None
     def _extract_receptor(label: str) -> Optional[str]:
@@ -135,10 +143,10 @@ def _native_rmsd_by_receptor(cfg: dict, log) -> Optional[pd.DataFrame]:
     if df.empty:
         return None
     mapped = (
-        df.groupby("receptor")["RMSD"]
+        df.groupby("receptor")[rmsd_col]
         .min()
         .reset_index()
-        .rename(columns={"RMSD": "native_rmsd"})
+        .rename(columns={rmsd_col: "native_rmsd"})
     )
     return mapped
 

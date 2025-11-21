@@ -169,12 +169,12 @@ def calc_rmsd_from_pdbqt(ref_fp: Path, pred_fp: Path,
     Compute RMSD metrics between native and predicted poses.
 
     If the predicted file contains multiple poses (MODEL blocks),
-    the RMSD is evaluated for each pose separately and the BEST
-    (lowest) RMSD is reported. This reflects the standard practice
-    of selecting the closest pose among generated docking solutions.
+    the RMSD is evaluated for each pose separately. Returns both:
+    - Best (lowest) RMSD: standard metric showing algorithm's potential
+    - Mean RMSD: stability metric showing result reproducibility
 
     Returns dict with keys:
-      rmsd_full, n_common, n_ref
+      rmsd_full (best), rmsd_mean, n_common, n_ref, n_poses
     """
     ref_names, _, ref_xyz = _read_coords(ref_fp, heavy_only)
 
@@ -186,6 +186,7 @@ def calc_rmsd_from_pdbqt(ref_fp: Path, pred_fp: Path,
 
     best_rmsd: float | None = None
     best_n_common: int = 0
+    all_rmsds: list[float] = []
 
     for pred_names, _, pred_xyz in models:
         amap = _map_by_name(ref_names, pred_names)
@@ -198,6 +199,7 @@ def calc_rmsd_from_pdbqt(ref_fp: Path, pred_fp: Path,
 
         p_idx, r_idx = zip(*amap)
         rmsd_full, _ = _kabsch(pred_xyz[list(p_idx)], ref_xyz[list(r_idx)])
+        all_rmsds.append(rmsd_full)
 
         if best_rmsd is None or rmsd_full < best_rmsd:
             best_rmsd = rmsd_full
@@ -206,10 +208,14 @@ def calc_rmsd_from_pdbqt(ref_fp: Path, pred_fp: Path,
     if best_rmsd is None:
         raise ValueError(f"Could not compute RMSD between {ref_fp.name} and {pred_fp.name}")
 
+    mean_rmsd = float(np.mean(all_rmsds)) if all_rmsds else best_rmsd
+
     return {
         "rmsd_full": best_rmsd,
+        "rmsd_mean": mean_rmsd,
         "n_common": best_n_common,
         "n_ref": len(ref_xyz),
+        "n_poses": len(all_rmsds),
     }
 
 
@@ -394,7 +400,7 @@ def run_rmsd_and_plot(cfg: dict, log: logging.Logger) -> None:
         # 1) Compute RMSD metrics
         try:
             metrics = calc_rmsd_from_pdbqt(native_fp, dock, heavy_only=True)
-            msg = f"RMSD={metrics['rmsd_full']:.3f} Å ({metrics['n_common']}/{metrics['n_ref']})"
+            msg = f"RMSD_best={metrics['rmsd_full']:.3f} Å, RMSD_mean={metrics['rmsd_mean']:.3f} Å ({metrics['n_common']}/{metrics['n_ref']}, {metrics['n_poses']} poses)"
             log.info("%s: %s", stem, msg)
         except Exception as exc:
             log.error("RMSD error for %s: %s", dock.name, exc)
@@ -430,21 +436,26 @@ def run_rmsd_and_plot(cfg: dict, log: logging.Logger) -> None:
 
         rows.append({
             "Complex": stem,
-            "RMSD": metrics['rmsd_full'],
+            "RMSD_best": metrics['rmsd_full'],
+            "RMSD_mean": metrics['rmsd_mean'],
             "n_common": metrics['n_common'],
             "n_ref": metrics['n_ref'],
+            "n_poses": metrics['n_poses'],
         })
 
     # Write summary CSV
     if rows:
-        df = pd.DataFrame(rows).sort_values("RMSD")
+        df = pd.DataFrame(rows).sort_values("RMSD_best")
+        # Round RMSD values to 3 decimal places
+        df["RMSD_best"] = df["RMSD_best"].round(3)
+        df["RMSD_mean"] = df["RMSD_mean"].round(3)
         # Save RMSD summary in the main results folder instead of visuals
         summary_fp = vis_root.parent / "rmsd_summary.csv"
         df.to_csv(summary_fp, index=False)
-        high = df[df.RMSD > 2.0]
+        high = df[df.RMSD_best > 2.0]
         if not high.empty:
-            log.info("HIGH RMSD (>2Å): " +
-                     ", ".join(f"{c}:{r:.2f}" for c,r in zip(high.Complex, high.RMSD)))
+            log.info("HIGH RMSD_best (>2Å): " +
+                     ", ".join(f"{c}:{r:.2f}" for c,r in zip(high.Complex, high.RMSD_best)))
         log.info("RMSD summary saved: %s", summary_fp)
     else:
         log.info("No RMSD records generated.")
