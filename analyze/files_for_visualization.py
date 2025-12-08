@@ -15,8 +15,10 @@ All routines preserve existing file structure and skip already-generated artifac
 
 from pathlib import Path
 import subprocess
+import shutil
 import xml.etree.ElementTree as ET
 import logging
+from typing import Optional
 from openbabel import pybel
 
 log = logging.getLogger(__name__)
@@ -83,14 +85,97 @@ def _max_serial(pdb_path: Path) -> int:
     return last
 
 
+def _extract_waters_from_pdb(pdb_path: Path, ligand_coords: list[tuple[float, float, float]], 
+                              cutoff: float = 5.0) -> list[str]:
+    """
+    Extract water molecules (HOH/WAT) from a PDB file that are within cutoff distance of ligand.
+    
+    Parameters
+    ----------
+    pdb_path : Path
+        Path to original PDB file (may contain waters).
+    ligand_coords : list[tuple[float, float, float]]
+        List of (x, y, z) coordinates of ligand atoms.
+    cutoff : float
+        Maximum distance in Angstroms for water to be included (default 5.0).
+    
+    Returns
+    -------
+    list[str]
+        List of PDB lines for water molecules within cutoff.
+    """
+    if not pdb_path.exists():
+        return []
+    
+    waters = []
+    cutoff2 = cutoff * cutoff
+    water_resnames = {"HOH", "WAT", "DOD"}
+    
+    with pdb_path.open() as fh:
+        for ln in fh:
+            if not ln.startswith("HETATM"):
+                continue
+            resname = ln[17:20].strip().upper()
+            if resname not in water_resnames:
+                continue
+            
+            try:
+                x = float(ln[30:38])
+                y = float(ln[38:46])
+                z = float(ln[46:54])
+            except (ValueError, IndexError):
+                continue
+            
+            # Check if water is within cutoff of any ligand atom
+            for lx, ly, lz in ligand_coords:
+                dist2 = (x - lx)**2 + (y - ly)**2 + (z - lz)**2
+                if dist2 <= cutoff2:
+                    waters.append(ln.rstrip())
+                    break
+    
+    return waters
+
+
+def _get_ligand_coords(lig_pdb: Path) -> list[tuple[float, float, float]]:
+    """
+    Extract coordinates of all ligand atoms from a PDB file.
+    
+    Parameters
+    ----------
+    lig_pdb : Path
+        Path to ligand PDB file.
+    
+    Returns
+    -------
+    list[tuple[float, float, float]]
+        List of (x, y, z) coordinates.
+    """
+    coords = []
+    if not lig_pdb.exists():
+        return coords
+    
+    with lig_pdb.open() as fh:
+        for ln in fh:
+            if ln.startswith(("ATOM", "HETATM")):
+                try:
+                    x = float(ln[30:38])
+                    y = float(ln[38:46])
+                    z = float(ln[46:54])
+                    coords.append((x, y, z))
+                except (ValueError, IndexError):
+                    continue
+    
+    return coords
+
+
 def _write_ligand_pdb(
     lig_pdbqt: Path,
     dst: Path,
     start_serial: int,
     resname: str = "LIG",
-    chain: str | None = None,
+    chain: Optional[str] = None,
     resnum: int = 501,
-    receptor_pdb: Path | None = None,
+    receptor_pdb: Optional[Path] = None,
 ) -> None:
     """
     Generate a PDB from a PDBQT ligand, renumber atoms, and set residue metadata.
@@ -154,9 +239,13 @@ def _write_ligand_pdb(
 
 # ───────────── prepare_complex_pdb ─────────────
 
-def prepare_complex_pdb(rec_pdbqt: Path, lig_pdbqt: Path, complex_dir: Path):
+def prepare_complex_pdb(rec_pdbqt: Path, lig_pdbqt: Path, complex_dir: Path, 
+                        original_pdb: Optional[Path] = None):
     """
     Assemble receptor and ligand PDBs into a visualization complex and PLIP input.
+    
+    If original_pdb is provided, water molecules within 5Å of the ligand will be
+    added to the PLIP input structure to enable water bridge detection.
 
     Parameters
     ----------
@@ -166,6 +255,9 @@ def prepare_complex_pdb(rec_pdbqt: Path, lig_pdbqt: Path, complex_dir: Path):
         Ligand pose file '<rec>__<lig>__<tag>.pdbqt'.
     complex_dir : Path
         Directory where output files will be created.
+    original_pdb : Path or None, optional
+        Original PDB file (may contain waters). If provided, waters near ligand
+        will be extracted and added to PLIP input.
 
     Returns
     -------
@@ -189,8 +281,19 @@ def prepare_complex_pdb(rec_pdbqt: Path, lig_pdbqt: Path, complex_dir: Path):
         offset = _max_serial(rec_pdb) + 1
         _write_ligand_pdb(lig_pdbqt, lig_pdb, start_serial=offset)
 
-    # 3) prepare PLIP input by concatenating receptor + ligand
+    # 3) prepare PLIP input by concatenating receptor + ligand + waters (if available)
     if not plip_pdb.exists():
+        # Get ligand coordinates for water proximity filtering
+        lig_coords = _get_ligand_coords(lig_pdb)
+        
+        # Extract waters from original PDB if available
+        waters = []
+        if original_pdb is not None and original_pdb.exists():
+            waters = _extract_waters_from_pdb(original_pdb, lig_coords, cutoff=5.0)
+            if waters:
+                log.debug("Found %d water molecules near ligand in %s", len(waters), original_pdb.name)
+        
+        # Write PLIP input: receptor + ligand + waters
         with plip_pdb.open("w") as fout:
             # write receptor atoms
             for ln in rec_pdb.read_text().splitlines():
@@ -201,6 +304,11 @@ def prepare_complex_pdb(rec_pdbqt: Path, lig_pdbqt: Path, complex_dir: Path):
             for ln in lig_pdb.read_text().splitlines():
                 if ln.startswith(("ATOM", "HETATM")):
                     fout.write(ln + "\n")
+            # write waters if available
+            if waters:
+                fout.write("TER\n")
+                for water_line in waters:
+                    fout.write(water_line + "\n")
             fout.write("END\n")
 
     # 4) prepare simplified PDB for py3Dmol visualization
@@ -249,6 +357,8 @@ def generate_files(cfg: dict, log):
     out_dir = Path(cfg["paths"]["output_folder"])
     base_vis = Path(cfg["paths"]["visuals"])
     rec_dir = Path(cfg["paths"]["receptors_cleaned_folder"])
+    crystals_dir = Path(cfg["paths"]["crystals_folder"])
+    receptors_dir = Path(cfg["paths"]["receptors_folder"])
     
     # Load better_than_native.csv to get only hits
     better_csv = out_dir / "better_than_native.csv"
@@ -299,9 +409,24 @@ def generate_files(cfg: dict, log):
         complex_dir.mkdir(parents=True, exist_ok=True)
 
         out_pdb = complex_dir / f"complex__{rec_id}__{lig_id}__{expected_tag}.pdb"
+        
+        # Try to find original PDB with waters (check both crystals_dir and receptors_dir)
+        original_pdb = None
+        for candidate_dir in [crystals_dir, receptors_dir]:
+            # Try original PDB first
+            candidate = candidate_dir / f"{rec_id}.pdb"
+            if candidate.exists():
+                original_pdb = candidate
+                break
+            # Try fixed PDB (from PDBFixer)
+            candidate = candidate_dir / f"{rec_id}_fixed.pdb"
+            if candidate.exists():
+                original_pdb = candidate
+                break
+        
         if not out_pdb.exists():
             try:
-                prepare_complex_pdb(rec_pdbqt, lig_pdbqt, complex_dir)
+                prepare_complex_pdb(rec_pdbqt, lig_pdbqt, complex_dir, original_pdb=original_pdb)
                 log.debug("Prepared complex: %s", out_pdb.name)
             except Exception as e:
                 log.error("Failed to prepare complex for %s: %s", lig_pdbqt.name, e)
@@ -309,13 +434,40 @@ def generate_files(cfg: dict, log):
 
         plip_dir = complex_dir / "plip"
         plip_xml = plip_dir / "report.xml"
+        plip_pdb = complex_dir / f"{rec_id}_{lig_id}_plip.pdb"
+        
+        # Generate PLIP report if it doesn't exist
+        # The improved version automatically includes waters from original PDB
         if not plip_xml.exists():
+            # Ensure complex PDB with waters is created
+            if not plip_pdb.exists():
+                try:
+                    prepare_complex_pdb(rec_pdbqt, lig_pdbqt, complex_dir, original_pdb=original_pdb)
+                    log.debug("Prepared complex PDB with waters: %s", complex_dir.name)
+                except Exception as e:
+                    log.warning("Failed to prepare complex PDB for %s: %s", complex_dir.name, e)
+                    continue
+            
             plip_dir.mkdir(exist_ok=True)
             try:
-                subprocess.run([
-                    "plip", "-f", str(out_pdb), "-o", str(plip_dir), "-x"
-                ], check=True)
+                # Use PLIP with improved parameters for better interaction detection
+                # Note: PLIP automatically detects interactions, but having waters in the structure
+                # is crucial for water bridge detection. We've added waters from original PDB above.
+                # PLIP will use default thresholds which are well-tuned for most cases.
+                plip_cmd = shutil.which("plip") or "plip"
+                cmd = [
+                    plip_cmd, "-f", str(plip_pdb), "-o", str(plip_dir), "-x"
+                ]
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
                 log.debug("Generated PLIP XML for: %s", out_pdb.name)
+                if result.stdout:
+                    log.debug("PLIP output: %s", result.stdout[:200])
+            except subprocess.CalledProcessError as e:
+                log.error("PLIP failed for %s: %s", out_pdb.name, e)
+                if e.stdout:
+                    log.debug("PLIP STDOUT: %s", e.stdout[:500])
+                if e.stderr:
+                    log.debug("PLIP STDERR: %s", e.stderr[:500])
             except Exception as e:
                 log.error("PLIP failed for %s: %s", out_pdb.name, e)
 
