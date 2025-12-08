@@ -19,6 +19,13 @@ import requests
 from Bio.PDB import PDBIO, PDBParser, Select
 from prepare_inputs.adt_preparator import ligand_to_pdbqt
 
+try:
+    import pdbfixer
+    from openmm import app
+    PDBFIXER_AVAILABLE = True
+except ImportError:
+    PDBFIXER_AVAILABLE = False
+
 ###############################################################################
 # Helpers
 ###############################################################################
@@ -38,6 +45,54 @@ def _guess_biggest_het_ligand(pdb_file: Path) -> str:
         raise RuntimeError(f"{pdb_file.name} contains no HETATM records – cannot guess ligand.")
 
     return max(sizes, key=sizes.get)
+
+def preprocess_protein(input_filepath: Path, ph: float = 7.4) -> Path:
+    """
+    Process a protein file with PDBFixer to prepare it for docking.
+
+    This function uses PDBFixer to add missing residues, atoms, and hydrogens.
+    It produces a cleaned and complete protein structure suitable for molecular
+    docking simulations.
+
+    Parameters
+    ----------
+    input_filepath : Path
+        Path to the input protein PDB file.
+    ph : float
+        The pH to use for adding missing hydrogens (default: 7.4).
+
+    Returns
+    -------
+    Path
+        Path to the output processed protein PDB file (suffixed with '_fixed').
+
+    Raises
+    ------
+    AssertionError
+        If input or output file does not exist.
+    RuntimeError
+        If PDBFixer is not available.
+    """
+    if not PDBFIXER_AVAILABLE:
+        raise RuntimeError("PDBFixer is not installed. Install with: conda install -c conda-forge pdbfixer openmm")
+    
+    assert input_filepath.exists(), f"PDB file {str(input_filepath)} does not exist!"
+
+    fixer = pdbfixer.PDBFixer(filename=str(input_filepath))
+    fixer.findMissingResidues()
+    fixer.findNonstandardResidues()
+    fixer.findMissingAtoms()
+    fixer.addMissingAtoms()
+    fixer.addMissingHydrogens(ph)
+
+    output_dir = input_filepath.parent
+    output_filepath = output_dir / f"{input_filepath.stem}_fixed.pdb"
+    with open(output_filepath, 'w') as f:
+        app.PDBFile.writeFile(fixer.topology, fixer.positions, f)
+    
+    assert output_filepath.exists(), f"Output file {str(output_filepath)} does not exist!"
+    return output_filepath
+
 
 def fetch(pdb_id: str, out_dir: Path, *, overwrite: bool = False) -> Path:
     pdb_id = pdb_id.upper()
@@ -190,6 +245,15 @@ def fetch_and_split_batch(cfg: Mapping, log, *, overwrite: bool = False) -> None
         try:
             log.info("Downloading %s…", pdb_id)
             pdb_path = fetch(pdb_id_upper, raw_dir, overwrite=overwrite)
+
+            # Preprocess with PDBFixer if available
+            if PDBFIXER_AVAILABLE:
+                log.info("Preprocessing %s with PDBFixer…", pdb_id)
+                try:
+                    pdb_path = preprocess_protein(pdb_path)
+                    log.info("✓ PDBFixer complete → %s", pdb_path.name)
+                except Exception as exc:
+                    log.warning("PDBFixer failed for %s: %s, using original", pdb_id, exc)
 
             ligand_resname = res_map.get(pdb_id)
             if not ligand_resname:

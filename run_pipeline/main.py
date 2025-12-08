@@ -9,8 +9,7 @@ This script performs the following steps:
 5. RMSD & OVERLAYS – Calculate RMSD and generate 2D overlays (only in redock mode).
 6. FINAL CHECK – Validate success of docking pipeline.
 7. VISUALIZATION – Preparing files for visualization in jupyter notebooks.
-8. (Optional) Convert SMILES from CSV to ligands.
-9. DONE – Complete.
+8. DONE – Complete.
 
 This script reads from a YAML configuration file and supports dry-run mode.
 """
@@ -50,7 +49,7 @@ def prepare_inputs(cfg, log):
     Step 1/9: Prepare receptor and ligand inputs.
     Converts .pdb to .pdbqt and fetches PDB structures if needed.
     """
-    log.info("[1/9] PREPARE INPUTS")
+    log.info("[1/8] PREPARE INPUTS")
 
     rec_dir = Path(cfg["paths"]["receptors_folder"])
     rec_clean = Path(cfg["paths"]["receptors_cleaned_folder"])
@@ -131,8 +130,8 @@ def main():
 
     prepare_inputs(cfg, log)
 
-    # Step 2/9: Docking
-    log.info("[2/9] DOCK")
+    # Step 2/8: Docking
+    log.info("[2/8] DOCK")
     out_root = Path(cfg["paths"]["output_folder"]).resolve()
     mode = cfg.get("docking_mode", "matrix")
     if mode == "redock_native":
@@ -149,21 +148,21 @@ def main():
     else:
         run_batch_docking(cfg, log)
 
-    # Step 3/9: Merge docking logs
-    log.info("[3/9] MERGE LOGS")
+    # Step 3/8: Merge docking logs
+    log.info("[3/8] MERGE LOGS")
     consolidate_logs(cfg, log)
 
-    # Step 4/9: Post-processing
-    log.info("[4/9] POST‑PROCESSING")
+    # Step 4/8: Post-processing
+    log.info("[4/8] POST‑PROCESSING")
     rank_vs_native(cfg, log)
 
-    # Step 5/9: RMSD & overlays (redocking only)
+    # Step 5/8: RMSD & overlays (redocking only)
     if cfg["docking_mode"] == "redock_native":
-        log.info("[5/9] RMSD & OVERLAYS")
+        log.info("[5/8] RMSD & OVERLAYS")
         run_rmsd_and_plot(cfg, log)
 
-    # Step 6/9: Final validation
-    log.info("[6/9] FINAL CHECK")
+    # Step 6/8: Final validation
+    log.info("[6/8] FINAL CHECK")
     result_files = list(out_dir.glob("*.pdbqt"))
     successes = sum(1 for f in result_files if f.stat().st_size > 0)
     total = len(result_files)
@@ -171,12 +170,11 @@ def main():
     log.info(f"→ Found {successes}/{total} valid docking results.")
     log.info("→ Pipeline finished – validation %s", "OK" if ok else "FAIL")
 
-    # Step 7/9: Visual summary
-
-    log.info("[7/9] Preparing files for visualization")
+    # Step 7/8: Visual summary
+    log.info("[7/8] Preparing files for visualization")
     generate_files(cfg, log)
 
-    log.info("[9/9] DONE. Full docking workflow completed.")
+    log.info("[8/8] DONE. Full docking workflow completed.")
 
 
 

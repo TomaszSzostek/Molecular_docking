@@ -223,7 +223,7 @@ def generate_files(cfg: dict, log):
     Discover docking results and generate visualization artifacts.
 
     Steps:
-      1) Identify PDBQT ligand results matching the docking mode.
+      1) Load better_than_native.csv to get list of complexes to visualize.
       2) For each, ensure output directory exists.
       3) Call prepare_complex_pdb to build PDBs.
       4) Invoke PLIP to create interaction XML reports.
@@ -244,31 +244,50 @@ def generate_files(cfg: dict, log):
         log.info("Visualization disabled – skipping")
         return
 
-    mode = cfg.get("docking_mode", "matrix")
+    import pandas as pd
+    
     out_dir = Path(cfg["paths"]["output_folder"])
     base_vis = Path(cfg["paths"]["visuals"])
     rec_dir = Path(cfg["paths"]["receptors_cleaned_folder"])
-
-    if mode == "redock_native":
-        result_dir = out_dir / "dock_native"
-        expected_tag = "native_redock"
-    elif mode == "diagonal":
-        result_dir = out_dir / "diagonal"
-        expected_tag = "diag"
-    else:
-        result_dir = out_dir / "matrix"
-        expected_tag = "dock"
-
-    lig_files = list(result_dir.rglob("*__*__*.pdbqt"))
-    if not lig_files:
-        log.warning("No docking results (*.pdbqt) for mode %r – skipping", mode)
+    
+    # Load better_than_native.csv to get only hits
+    better_csv = out_dir / "better_than_native.csv"
+    if not better_csv.exists():
+        log.warning("better_than_native.csv not found – skipping 2D visualization")
         return
+    
+    try:
+        better_df = pd.read_csv(better_csv)
+    except Exception as e:
+        log.error("Failed to read better_than_native.csv: %s", e)
+        return
+    
+    if better_df.empty:
+        log.info("better_than_native.csv is empty – no complexes to visualize")
+        return
+    
+    log.info("Preparing 2D visualizations for %d complexes from better_than_native.csv…", len(better_df))
 
-    log.info("Preparing complexes for %d ligands (mode=%s)…", len(lig_files), mode)
-
-    for lig_pdbqt in lig_files:
-        rec_id, lig_id, tag = lig_pdbqt.stem.split("__")[:3]
-        if tag != expected_tag:
+    for _, row in better_df.iterrows():
+        rec_id = str(row["receptor"])
+        lig_id = str(row["ligand"])
+        mode = str(row.get("mode", "dock"))
+        
+        # Map mode to expected tag and result directory
+        if mode == "native_redock":
+            result_dir = out_dir / "dock_native"
+            expected_tag = "native_redock"
+        elif mode == "diag":
+            result_dir = out_dir / "diagonal"
+            expected_tag = "diag"
+        else:
+            result_dir = out_dir / "matrix"
+            expected_tag = "dock"
+        
+        # Find the PDBQT file
+        lig_pdbqt = result_dir / f"{rec_id}__{lig_id}__{expected_tag}.pdbqt"
+        if not lig_pdbqt.exists():
+            log.warning("PDBQT not found: %s – skipping", lig_pdbqt.name)
             continue
 
         rec_pdbqt = rec_dir / f"{rec_id}.pdbqt"
@@ -276,10 +295,10 @@ def generate_files(cfg: dict, log):
             log.warning("Receptor %s missing – skipping %s", rec_id, lig_pdbqt.name)
             continue
 
-        complex_dir = base_vis / f"{tag}__{rec_id}__{lig_id}"
+        complex_dir = base_vis / f"{expected_tag}__{rec_id}__{lig_id}"
         complex_dir.mkdir(parents=True, exist_ok=True)
 
-        out_pdb = complex_dir / f"complex__{rec_id}__{lig_id}__{tag}.pdb"
+        out_pdb = complex_dir / f"complex__{rec_id}__{lig_id}__{expected_tag}.pdb"
         if not out_pdb.exists():
             try:
                 prepare_complex_pdb(rec_pdbqt, lig_pdbqt, complex_dir)
@@ -299,6 +318,94 @@ def generate_files(cfg: dict, log):
                 log.debug("Generated PLIP XML for: %s", out_pdb.name)
             except Exception as e:
                 log.error("PLIP failed for %s: %s", out_pdb.name, e)
+
+
+def generate_2d_boards(cfg: dict, log):
+    """
+    Generate 2D interaction boards for all complexes in better_than_native.csv.
+
+    This function reads better_than_native.csv and generates 2D visualization
+    boards for each complex using the visualize_2d module.
+
+    Parameters
+    ----------
+    cfg : dict
+        Pipeline configuration with 'paths'.
+    log : Logger
+        Logger for progress and errors.
+
+    Returns
+    -------
+    None
+    """
+    try:
+        from visualize_2d import render_single
+    except ImportError:
+        log.error("visualize_2d module not found – skipping 2D board generation")
+        return
+
+    import pandas as pd
+    
+    out_dir = Path(cfg["paths"]["output_folder"])
+    base_vis = Path(cfg["paths"]["visuals"])
+    
+    # Load better_than_native.csv
+    better_csv = out_dir / "better_than_native.csv"
+    if not better_csv.exists():
+        log.warning("better_than_native.csv not found – skipping 2D board generation")
+        return
+    
+    try:
+        better_df = pd.read_csv(better_csv)
+    except Exception as e:
+        log.error("Failed to read better_than_native.csv: %s", e)
+        return
+    
+    if better_df.empty:
+        log.info("better_than_native.csv is empty – no boards to generate")
+        return
+    
+    log.info("Generating 2D boards for %d complexes from better_than_native.csv…", len(better_df))
+    
+    boards_dir = base_vis / "2d_boards"
+    boards_dir.mkdir(parents=True, exist_ok=True)
+    
+    success_count = 0
+    for idx, row in better_df.iterrows():
+        rec_id = str(row["receptor"])
+        lig_id = str(row["ligand"])
+        mode = str(row.get("mode", "dock"))
+        
+        # Map mode to expected tag
+        if mode == "native_redock":
+            expected_tag = "native_redock"
+        elif mode == "diag":
+            expected_tag = "diag"
+        else:
+            expected_tag = "dock"
+        
+        complex_dir = base_vis / f"{expected_tag}__{rec_id}__{lig_id}"
+        if not complex_dir.exists():
+            log.warning("Complex directory not found: %s – skipping", complex_dir.name)
+            continue
+        
+        # Check if PLIP XML exists
+        plip_xml = complex_dir / "plip" / "report.xml"
+        if not plip_xml.exists():
+            log.warning("PLIP XML not found for %s – skipping", complex_dir.name)
+            continue
+        
+        # Generate 2D board
+        out_path = boards_dir / f"{rec_id}__{lig_id}__{expected_tag}.png"
+        try:
+            render_single(complex_dir, out_path, size=(2200, 1800), fmt="png")
+            log.debug("Generated 2D board: %s", out_path.name)
+            success_count += 1
+        except Exception as e:
+            log.error("Failed to generate 2D board for %s: %s", complex_dir.name, e)
+            continue
+    
+    log.info("Generated %d/%d 2D boards successfully", success_count, len(better_df))
 
 
 

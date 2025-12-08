@@ -43,18 +43,20 @@ def _render_ligand(mol, size: Tuple[int, int], highlight_atoms: set[int], highli
     w, h = size
     drawer = rdMolDraw2D.MolDraw2DCairo(w, h)
     options = drawer.drawOptions()
-    options.fixedBondLength = 30
-    options.padding = 0.05
-    options.bondLineWidth = 5.0
-    setattr(options, "atomLabelFontSize", 2.0)
-    setattr(options, "atomLabelFontFace", "Arial")
+    options.fixedBondLength = 70  # Even larger for bigger ligand
+    options.padding = 0.01  # Minimal padding
+    options.bondLineWidth = 7.0  # Thicker bonds
+    # Use baseFontSize instead of atomLabelFontSize (deprecated in newer RDKit)
+    if hasattr(options, "baseFontSize"):
+        options.baseFontSize = 0.5  # Smaller font for atom labels
+    # atomLabelFontFace is not available in newer RDKit versions
     options.useBWAtomPalette()
     rdMolDraw2D.PrepareAndDrawMolecule(
         drawer,
         mol,
         highlightAtoms=list(highlight_atoms),
         highlightAtomColors=highlight_colors,
-        highlightAtomRadii={idx: 0.6 for idx in highlight_atoms},
+        highlightAtomRadii={idx: 0.6 for idx in highlight_atoms},  # Larger for glow effect
 
     )
     drawer.FinishDrawing()
@@ -80,7 +82,7 @@ def _hex_to_rgba(hex_color: str, alpha: int = 255) -> tuple[int, int, int, int]:
     return (r, g, b, alpha)
 
 
-def _draw_dashed_line(draw: ImageDraw.ImageDraw, start: tuple[int, int], end: tuple[int, int], color: str, width: int = 4, dash: int = 10):
+def _draw_dashed_line(draw: ImageDraw.ImageDraw, start: tuple[int, int], end: tuple[int, int], color: str, width: int = 8, dash: int = 10):
     """Draw a dashed line between two points."""
     x0, y0 = start
     x1, y1 = end
@@ -121,13 +123,17 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
     def scale_metric(value: float, min_px: float = 1.0) -> int:
         return int(round(max(value * layout_scale, min_px)))
 
-    # Ligand drawing
-    ligand_box_width = scale_metric(1080, 640)
-    ligand_box_height = scale_metric(780, 520)
-    ligand_box_left = (width - ligand_box_width) // 2
-    ligand_box_top = panel[1] + scale_metric(100, 60)
+    # Ligand drawing - circular box, much larger, centered lower
+    ligand_radius = scale_metric(700, 500)  # Circular ligand area
+    ligand_center_x = width // 2  # Centered horizontally
+    ligand_center_y = (panel[1] + panel[3]) // 2 + scale_metric(100, 60)  # Lower, centered vertically
+    ligand_box_left = ligand_center_x - ligand_radius
+    ligand_box_top = ligand_center_y - ligand_radius
+    ligand_box_width = ligand_radius * 2
+    ligand_box_height = ligand_radius * 2
     ligand_box = (ligand_box_left, ligand_box_top, ligand_box_left + ligand_box_width, ligand_box_top + ligand_box_height)
-    _rounded_panel(draw, ligand_box, 36, "#f9fbff")
+    # Draw circular background for ligand
+    draw.ellipse(ligand_box, fill="#f9fbff", outline=PALETTE.outline, width=3)
     involved_atoms: set[int] = set()
     atom_colors: dict[int, tuple[float, float, float]] = {}
     for interaction in assets.interactions:
@@ -148,31 +154,55 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
     )
     board.paste(ligand_img, ligand_box[:2], ligand_img)
 
-    # Titles (draw AFTER overlays so they remain visible)
-    title_font = _load_font(56)
-    subtitle_font = _load_font(34)
+    # Titles in a box (draw AFTER overlays so they remain visible)
+    title_font = _load_font(64)  # Larger
+    subtitle_font = _load_font(40)  # Larger
     title = f"{assets.ligand_id} ↦ {assets.receptor_id}"
-    title_w = draw.textlength(title, font=title_font)
-    draw.text(((width - title_w) // 2, panel[1] + 40), title, fill=PALETTE.text_dark, font=title_font)
     subtitle = "Detailed 2D interaction map"
+    
+    title_w = draw.textlength(title, font=title_font)
     subtitle_w = draw.textlength(subtitle, font=subtitle_font)
-    draw.text(((width - subtitle_w) // 2, panel[1] + 120), subtitle, fill="#4b4b4b", font=subtitle_font)
+    max_text_w = max(title_w, subtitle_w)
+    
+    # Calculate box dimensions
+    box_padding = scale_metric(30, 20)
+    box_x = (width - max_text_w) // 2 - box_padding
+    box_y = panel[1] + scale_metric(20, 15)
+    box_w = max_text_w + box_padding * 2
+    box_h = title_font.size + subtitle_font.size + scale_metric(50, 35)
+    title_box = (box_x, box_y, box_x + box_w, box_y + box_h)
+    
+    # Draw title box with rounded corners
+    _rounded_panel(draw, title_box, 20, PALETTE.panel, PALETTE.outline)
+    
+    # Draw titles inside box
+    title_y = box_y + scale_metric(25, 18)
+    subtitle_y = title_y + title_font.size + scale_metric(15, 10)
+    draw.text(((width - title_w) // 2, title_y), title, fill=PALETTE.text_dark, font=title_font)
+    draw.text(((width - subtitle_w) // 2, subtitle_y), subtitle, fill="#4b4b4b", font=subtitle_font)
+    
+    # Store title box for collision detection
+    title_box_for_collision = title_box  # Lower to avoid overlap
 
     # Interaction ribbons
     chip_font = _load_font(28)
     badge_draw = ImageDraw.Draw(board, "RGBA")
-    center = ((ligand_box[0] + ligand_box[2]) // 2, (ligand_box[1] + ligand_box[3]) // 2)
-    base_badge_height = scale_metric(68, 44)
+    center = (ligand_center_x, ligand_center_y)  # Center of circular ligand area
+    base_badge_height = scale_metric(80, 55)  # Larger badges
     legend_forbidden_top = panel[3] - scale_metric(230, 150)
     badge_padding = scale_metric(40, 18)
     panel_guard = scale_metric(40, 24)
     vertical_guard = scale_metric(110, 70)
-    ligand_guard = scale_metric(70, 42)
-    radial_margin = scale_metric(50, 24)
+    ligand_guard = scale_metric(15, 10)  # Very close to ligand edge
+    radial_margin = scale_metric(8, 5)  # Minimal margin
     placed_boxes: list[tuple[float, float, float, float]] = []
     sector_count = 3
     sector_width = 2 * math.pi / sector_count
     sector_margin = sector_width * 0.08
+    
+    # Base radius for labels - start just outside circular ligand
+    label_base_radius = ligand_radius + ligand_guard + scale_metric(10, 6)
+    label_ring_step = scale_metric(12, 8)  # Step between rings
 
     def _normalize_angle(angle: float) -> float:
         norm = angle % (2 * math.pi)
@@ -211,16 +241,21 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
 
     def _within_bounds(box):
         x0, y0, x1, y1 = box
+        # Check overlap with title box
+        title_x0, title_y0, title_x1, title_y1 = title_box_for_collision
+        title_guard = scale_metric(20, 15)
+        overlaps_title = not (x1 < title_x0 - title_guard or x0 > title_x1 + title_guard or 
+                              y1 < title_y0 - title_guard or y0 > title_y1 + title_guard)
+        
         return (
             x0 >= panel[0] + panel_guard
             and x1 <= panel[2] - panel_guard
             and y0 >= panel[1] + vertical_guard
             and y1 <= legend_forbidden_top
+            and not overlaps_title  # Don't overlap with title box
             and not (
-                x1 >= ligand_box[0] - ligand_guard
-                and x0 <= ligand_box[2] + ligand_guard
-                and y1 >= ligand_box[1] - ligand_guard
-                and y0 <= ligand_box[3] + ligand_guard
+                # Check if box overlaps with circular ligand area
+                math.hypot((x0 + x1) / 2 - center[0], (y0 + y1) / 2 - center[1]) < ligand_radius + ligand_guard
             )
         )
 
@@ -235,18 +270,20 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
         return [x0, y0, x1, y1]
 
     def _place_box(angle: float, angle_norm: float, badge_width: float, preferred_radius: float, sector_idx: int) -> tuple[float, float, float, float]:
-        base_radius = scale_metric(55, 28)
-        ring_step = scale_metric(35, 20)
-        slots_per_ring = max(10, int(round(10 * layout_scale)))
-        max_rings = 8
+        # Use the label_base_radius and label_ring_step from outer scope
+        base_radius = label_base_radius
+        ring_step = label_ring_step
+        slots_per_ring = max(16, int(round(16 * layout_scale)))  # More slots for better distribution
+        max_rings = 6  # Fewer rings but closer
         preferred_ring = int(max(0, min(max_rings - 1, round((preferred_radius - base_radius) / ring_step))))
         ring_order = list(range(max_rings))
         ring_order.sort(key=lambda r: abs(r - preferred_ring))
         for ring in ring_order:
             radius = base_radius + ring * ring_step
-            slots = slots_per_ring + ring * 4
+            slots = slots_per_ring + ring * 6  # More slots per ring
             slot_angles = [(2 * math.pi * s) / slots for s in range(slots)]
-            slot_angles.sort(key=lambda a: _angle_distance(_normalize_angle(a), angle_norm))
+            # Sort by distance to desired angle, but add some randomness to avoid clustering
+            slot_angles.sort(key=lambda a: _angle_distance(_normalize_angle(a), angle_norm) + (hash(str(ring) + str(a)) % 10) * 0.01)
             for loosen in range(sector_count):
                 placed = False
                 for theta in slot_angles:
@@ -347,16 +384,19 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
         norm = (dx ** 2 + dy ** 2) ** 0.5 or 1
         direction = (dx / norm, dy / norm)
         color = PALETTE.interactions.get(interaction.kind, PALETTE.accent)
-        label_font = _load_font(24, weight="bold")
+        label_font = _load_font(32, weight="bold")  # Much larger
         residue = interaction.protein_label or interaction.protein_atom
         txt_w = badge_draw.textlength(residue, font=label_font)
-        badge_width = max(int(txt_w) + 36, 72)
+        badge_width = max(int(txt_w) + 50, 100)  # Much larger padding
         angle = math.atan2(direction[1], direction[0])
         angle_norm = _normalize_angle(angle)
         sector_idx = _sector_index(angle_norm)
+        # Calculate distance from ligand center to interaction atom
+        atom_distance = math.hypot(dx, dy)
+        # Preferred radius: just outside the circular ligand area
         preferred_radius = max(
-            math.hypot(dx, dy) + ligand_guard + radial_margin,
-            scale_metric(60, 30),
+            ligand_radius + ligand_guard + radial_margin,
+            atom_distance + scale_metric(15, 10),  # Small offset from atom
         )
         bx0, by0, bx1, by1 = _place_box(angle, angle_norm, badge_width, preferred_radius, sector_idx)
         placed_boxes.append((bx0, by0, bx1, by1))
@@ -368,8 +408,8 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
                 (int(atom_x), int(atom_y)),
                 badge_center,
                 color,
-                width=3,
-                dash=10,
+                width=8,  # Thicker lines only
+                dash=10,  # Keep original dash length
             )
         badge_draw.rounded_rectangle((bx0, by0, bx1, by1), radius=14, fill=_hex_to_rgba(color, 205))
         badge_draw.rounded_rectangle((bx0 + 4, by0 + 4, bx1 - 4, by1 - 4), radius=10, outline=_hex_to_rgba("#FFFFFF", 150), width=2)
@@ -378,28 +418,59 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
         for idx, atom_x, atom_y in atom_points:
             px = int(atom_x)
             py = int(atom_y)
-            badge_draw.ellipse((px - 8, py - 8, px + 8, py + 8), fill=_hex_to_rgba(color, 255))
+            
+            # Draw glow effect (multiple circles with decreasing opacity) - draw first
+            circle_size = 14  # Larger circle
+            for i in range(4):
+                glow_radius = circle_size - i * 2.5
+                glow_alpha = max(100 - i * 20, 40)
+                if glow_radius > 0:
+                    badge_draw.ellipse(
+                        (px - glow_radius, py - glow_radius, px + glow_radius, py + glow_radius),
+                        fill=_hex_to_rgba(color, glow_alpha),  # Filled for glow effect
+                        outline=None
+                    )
+            
+            # Draw main circle outline on top of glow
+            badge_draw.ellipse((px - circle_size, py - circle_size, px + circle_size, py + circle_size), 
+                             fill=None, outline=_hex_to_rgba(color, 255), width=2)
+            
+            # Draw atom on top of circle - extract from ligand image and paste on top
+            # Get atom position in ligand image coordinates
+            lig_atom_x = atom_x - ligand_box[0]
+            lig_atom_y = atom_y - ligand_box[1]
+            # Extract region around atom from ligand image (larger to cover circle)
+            atom_region_size = int(circle_size + 4)
+            crop_x0 = max(0, int(lig_atom_x - atom_region_size))
+            crop_y0 = max(0, int(lig_atom_y - atom_region_size))
+            crop_x1 = min(ligand_img.width, int(lig_atom_x + atom_region_size))
+            crop_y1 = min(ligand_img.height, int(lig_atom_y + atom_region_size))
+            atom_region = ligand_img.crop((crop_x0, crop_y0, crop_x1, crop_y1))
+            # Paste atom region on top of circle
+            paste_x = int(atom_x - atom_region_size)
+            paste_y = int(atom_y - atom_region_size)
+            board.paste(atom_region, (paste_x, paste_y), atom_region)
 
-    # Legend footer two rows
-    legend_font = _load_font(28, weight="bold")
-    legend_y = panel[3] - 150
+    # Legend footer - larger
+    legend_font = _load_font(36, weight="bold")  # Larger font
+    legend_y = panel[3] - scale_metric(200, 130)  # More space
     legend_title = "Legend"
     draw.text(((width - draw.textlength(legend_title, font=legend_font)) // 2, legend_y - 10), legend_title, fill=PALETTE.text_dark, font=legend_font)
     items = list(PALETTE.interactions.items())
     rows = 2
     cols = math.ceil(len(items) / rows)
-    col_width = 300
+    col_width = scale_metric(350, 250)  # Wider columns
     total_width = cols * col_width
     x_start = (width - total_width) // 2
     for idx, (kind, color) in enumerate(items):
         row = idx // cols
         col = idx % cols
         x = x_start + col * col_width
-        y_offset = legend_y + 38 + row * 58
+        y_offset = legend_y + scale_metric(50, 35) + row * scale_metric(70, 50)  # More spacing
         human = INTERACTION_KIND_MAP.get(kind, (kind, kind))[0]
-        box_size = 36
-        draw.rounded_rectangle((x, y_offset, x + box_size, y_offset + box_size), radius=8, fill=color)
-        draw.text((x + box_size + 10, y_offset + 4), human, fill=PALETTE.text_dark, font=_load_font(22))
+        box_size = scale_metric(45, 30)  # Larger boxes
+        draw.rounded_rectangle((x, y_offset, x + box_size, y_offset + box_size), radius=10, fill=color)
+        draw.text((x + box_size + 12, y_offset + 6), human, fill=PALETTE.text_dark, font=_load_font(28, weight="bold"))  # Bold text
 
     board = board.convert("RGB")
     out_path.parent.mkdir(parents=True, exist_ok=True)

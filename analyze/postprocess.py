@@ -17,6 +17,37 @@ from analyze import RMSD
 RMSD_THRESHOLD = 2.0
 
 
+def _load_smiles_map(cfg: dict) -> dict[str, str]:
+    """
+    Load SMILES mapping from ligands.csv if available.
+
+    Returns
+    -------
+    dict
+        Mapping from ligand ID (str) to SMILES string.
+    """
+    ligands_csv = Path(cfg["paths"]["ligands_folder"]) / "ligands.csv"
+    if not ligands_csv.exists():
+        return {}
+    
+    try:
+        smiles_df = pd.read_csv(ligands_csv, sep=";", encoding="utf-8-sig")
+        # Normalize column names
+        smiles_df.columns = [c.strip().lstrip('\ufeff') for c in smiles_df.columns]
+        
+        # Find ID and SMILES columns (case-insensitive)
+        id_col = next((c for c in smiles_df.columns if c.lower() == "id"), None)
+        smiles_col = next((c for c in smiles_df.columns if c.lower() == "smiles"), None)
+        
+        if not id_col or not smiles_col:
+            return {}
+        
+        # Create mapping with string keys
+        return dict(zip(smiles_df[id_col].astype(str), smiles_df[smiles_col]))
+    except Exception:
+        return {}
+
+
 def rank_vs_native(cfg: dict, log) -> None:
     """
     Filter and save ligands whose best docking score beats the native ligand.
@@ -105,6 +136,15 @@ def rank_vs_native(cfg: dict, log) -> None:
     hits["pose_stability_rmsd"] = hits.apply(
         lambda row: _pose_stability_rmsd(row, out_dir, log), axis=1
     )
+
+    # Ensure SMILES column is present (should be from results.csv)
+    if "smiles" not in hits.columns:
+        log.warning("SMILES column not found in results.csv, adding empty column")
+        smiles_map = _load_smiles_map(cfg)
+        if smiles_map:
+            hits["smiles"] = hits["ligand"].astype(str).map(smiles_map).fillna("")
+        else:
+            hits["smiles"] = ""
 
     # Drop internal-only columns
     hits = hits.drop(columns=["is_native"], errors="ignore")

@@ -73,6 +73,37 @@ def parse_smina_log(log_path: Path) -> dict:
     }
 
 
+def _load_smiles_map(cfg: dict) -> dict[str, str]:
+    """
+    Load SMILES mapping from ligands.csv if available.
+
+    Returns
+    -------
+    dict
+        Mapping from ligand ID (str) to SMILES string.
+    """
+    ligands_csv = Path(cfg["paths"]["ligands_folder"]) / "ligands.csv"
+    if not ligands_csv.exists():
+        return {}
+    
+    try:
+        smiles_df = pd.read_csv(ligands_csv, sep=";", encoding="utf-8-sig")
+        # Normalize column names
+        smiles_df.columns = [c.strip().lstrip('\ufeff') for c in smiles_df.columns]
+        
+        # Find ID and SMILES columns (case-insensitive)
+        id_col = next((c for c in smiles_df.columns if c.lower() == "id"), None)
+        smiles_col = next((c for c in smiles_df.columns if c.lower() == "smiles"), None)
+        
+        if not id_col or not smiles_col:
+            return {}
+        
+        # Create mapping with string keys
+        return dict(zip(smiles_df[id_col].astype(str), smiles_df[smiles_col]))
+    except Exception:
+        return {}
+
+
 def consolidate_logs(cfg: dict, log) -> None:
     """
     Locate all Smina .log files under the results folder, parse them,
@@ -83,13 +114,15 @@ def consolidate_logs(cfg: dict, log) -> None:
       2. Parses each file to extract affinity stats.
       3. Builds a DataFrame, computes an affinity range string.
       4. Drops entries with no affinity data.
-      5. Saves to 'results.csv' in the output folder.
+      5. Adds SMILES column for test ligands.
+      6. Saves to 'results.csv' in the output folder.
 
     Parameters
     ----------
     cfg : dict
         Pipeline configuration dictionary. Expects:
           - paths.output_folder: base output directory (str)
+          - paths.ligands_folder: directory containing ligands.csv (str)
     log : logging.Logger
         Logger for informational and error messages.
 
@@ -123,6 +156,18 @@ def consolidate_logs(cfg: dict, log) -> None:
     # Remove any rows lacking a min_affinity value
     if "min_affinity" in df.columns:
         df = df.dropna(subset=["min_affinity"], how="all")
+
+    # Add SMILES column for test ligands
+    smiles_map = _load_smiles_map(cfg)
+    if smiles_map:
+        df["smiles"] = df.apply(
+            lambda row: smiles_map.get(str(row["ligand"]), "") if not row["is_native"] else "",
+            axis=1
+        )
+        log.info("Added SMILES for %d test ligands", (df["smiles"] != "").sum())
+    else:
+        df["smiles"] = ""
+        log.warning("No SMILES mapping found – smiles column will be empty")
 
     # Write the consolidated results to CSV
     out_file = out_dir / "results.csv"

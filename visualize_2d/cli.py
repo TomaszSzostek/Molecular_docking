@@ -33,7 +33,7 @@ def _cli() -> argparse.Namespace:
         type=int,
         nargs=2,
         metavar=("W", "H"),
-        default=(1600, 1300),
+        default=(1200, 800),
         help="Canvas size in pixels.",
     )
     parser.add_argument(
@@ -48,7 +48,7 @@ def _cli() -> argparse.Namespace:
 def render_single(
     complex_dir: Path,
     out_path: Path | None = None,
-    size: tuple[int, int] = (2200, 1800),
+    size: tuple[int, int] = (1200, 800),
     fmt: str | None = None,
 ) -> Path:
     assets: ComplexAssets = build_complex_assets(complex_dir)
