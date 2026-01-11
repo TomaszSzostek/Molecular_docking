@@ -451,30 +451,41 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
             paste_y = int(atom_y - atom_region_size)
             board.paste(atom_region, (paste_x, paste_y), atom_region)
 
-    # Legend footer - larger, use full width
+    # Legend footer - larger, use full width with proper spacing
     legend_font = _load_font(50, weight="bold")  # Much larger font for better visibility
     legend_y = panel[3] - scale_metric(200, 130)  # More space
     legend_title = "Legend"
     draw.text(((width - draw.textlength(legend_title, font=legend_font)) // 2, legend_y - 10), legend_title, fill=PALETTE.text_dark, font=legend_font)
     items = list(PALETTE.interactions.items())
+    item_font = _load_font(40, weight="bold")
+    box_size = scale_metric(45, 30)  # Larger boxes
+    box_spacing = 15  # Space between box and text
+    
+    # Use 2 rows x 4 columns (original layout)
     rows = 2
     cols = math.ceil(len(items) / rows)
     
-    # Use 90% of panel width for legend to maximize space and prevent overlap
+    # Use 95% of panel width
     panel_width = panel[2] - panel[0]  # panel[2] is right edge, panel[0] is left edge
-    available_width = int(panel_width * 0.9)
-    col_width = available_width // cols  # Distribute evenly across columns
+    available_width = int(panel_width * 0.95)
     
+    # Distribute evenly across columns with padding between columns
+    col_width = available_width // cols
     x_start = panel[0] + (panel_width - available_width) // 2  # Center the legend area
+    
+    # Draw legend items with even spacing
     for idx, (kind, color) in enumerate(items):
         row = idx // cols
         col = idx % cols
+        
+        # Each column gets equal space
         x = x_start + col * col_width
+        
         y_offset = legend_y + scale_metric(50, 35) + row * scale_metric(70, 50)  # More spacing
         human = INTERACTION_KIND_MAP.get(kind, (kind, kind))[0]
-        box_size = scale_metric(45, 30)  # Larger boxes
+        
         draw.rounded_rectangle((x, y_offset, x + box_size, y_offset + box_size), radius=10, fill=color)
-        draw.text((x + box_size + 12, y_offset + 6), human, fill=PALETTE.text_dark, font=_load_font(40, weight="bold"))  # Much larger bold text
+        draw.text((x + box_size + box_spacing, y_offset + 6), human, fill=PALETTE.text_dark, font=item_font)
 
     board = board.convert("RGB")
     out_path.parent.mkdir(parents=True, exist_ok=True)

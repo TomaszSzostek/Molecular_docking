@@ -5,8 +5,6 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="dac79831-f59e-4d46-b4f2-f657e18ae8fb" name="Changes" comment="initial commit">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/run_pipeline/3D_visuals.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/run_pipeline/3D_visuals.ipynb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/visualize_2d/drawer.py" beforeDir="false" afterPath="$PROJECT_DIR$/visualize_2d/drawer.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -198,7 +196,7 @@
       <workItem from="1765545066134" duration="242000" />
       <workItem from="1766006503102" duration="832000" />
       <workItem from="1768161378801" duration="9000" />
-      <workItem from="1768167285251" duration="1710000" />
+      <workItem from="1768167285251" duration="2163000" />
     </task>
     <task id="LOCAL-00001" summary="initial commit">
       <option name="closed" value="true" />
@@ -312,7 +310,15 @@
       <option name="project" value="LOCAL" />
       <updated>1768161385480</updated>
     </task>
-    <option name="localTasksCounter" value="15" />
+    <task id="LOCAL-00015" summary="initial commit">
+      <option name="closed" value="true" />
+      <created>1768169107491</created>
+      <option name="number" value="00015" />
+      <option name="presentableId" value="LOCAL-00015" />
+      <option name="project" value="LOCAL" />
+      <updated>1768169107491</updated>
+    </task>
+    <option name="localTasksCounter" value="16" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
