@@ -43,7 +43,7 @@ def _render_ligand(mol, size: Tuple[int, int], highlight_atoms: set[int], highli
     w, h = size
     drawer = rdMolDraw2D.MolDraw2DCairo(w, h)
     options = drawer.drawOptions()
-    options.fixedBondLength = 70  # Even larger for bigger ligand
+    options.fixedBondLength = 60  # Slightly smaller ligand for better readability
     options.padding = 0.01  # Minimal padding
     options.bondLineWidth = 7.0  # Thicker bonds
     # Use baseFontSize instead of atomLabelFontSize (deprecated in newer RDKit)
@@ -384,7 +384,7 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
         norm = (dx ** 2 + dy ** 2) ** 0.5 or 1
         direction = (dx / norm, dy / norm)
         color = PALETTE.interactions.get(interaction.kind, PALETTE.accent)
-        label_font = _load_font(32, weight="bold")  # Much larger
+        label_font = _load_font(44, weight="bold")  # Much larger for better readability
         residue = interaction.protein_label or interaction.protein_atom
         txt_w = badge_draw.textlength(residue, font=label_font)
         badge_width = max(int(txt_w) + 50, 100)  # Much larger padding
@@ -451,17 +451,21 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
             paste_y = int(atom_y - atom_region_size)
             board.paste(atom_region, (paste_x, paste_y), atom_region)
 
-    # Legend footer - larger
-    legend_font = _load_font(36, weight="bold")  # Larger font
+    # Legend footer - larger, use full width
+    legend_font = _load_font(50, weight="bold")  # Much larger font for better visibility
     legend_y = panel[3] - scale_metric(200, 130)  # More space
     legend_title = "Legend"
     draw.text(((width - draw.textlength(legend_title, font=legend_font)) // 2, legend_y - 10), legend_title, fill=PALETTE.text_dark, font=legend_font)
     items = list(PALETTE.interactions.items())
     rows = 2
     cols = math.ceil(len(items) / rows)
-    col_width = scale_metric(350, 250)  # Wider columns
-    total_width = cols * col_width
-    x_start = (width - total_width) // 2
+    
+    # Use 90% of panel width for legend to maximize space and prevent overlap
+    panel_width = panel[2] - panel[0]  # panel[2] is right edge, panel[0] is left edge
+    available_width = int(panel_width * 0.9)
+    col_width = available_width // cols  # Distribute evenly across columns
+    
+    x_start = panel[0] + (panel_width - available_width) // 2  # Center the legend area
     for idx, (kind, color) in enumerate(items):
         row = idx // cols
         col = idx % cols
@@ -470,7 +474,7 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
         human = INTERACTION_KIND_MAP.get(kind, (kind, kind))[0]
         box_size = scale_metric(45, 30)  # Larger boxes
         draw.rounded_rectangle((x, y_offset, x + box_size, y_offset + box_size), radius=10, fill=color)
-        draw.text((x + box_size + 12, y_offset + 6), human, fill=PALETTE.text_dark, font=_load_font(28, weight="bold"))  # Bold text
+        draw.text((x + box_size + 12, y_offset + 6), human, fill=PALETTE.text_dark, font=_load_font(40, weight="bold"))  # Much larger bold text
 
     board = board.convert("RGB")
     out_path.parent.mkdir(parents=True, exist_ok=True)
