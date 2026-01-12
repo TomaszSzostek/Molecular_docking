@@ -87,7 +87,32 @@ def _iter_ligand_candidates(complex_dir: Path):
             yield candidate
 
 
-def _load_ligand(complex_dir: Path) -> Chem.Mol:
+def _load_ligand(complex_dir: Path, plip_xml: Path | None = None) -> Chem.Mol:
+    """
+    Load ligand molecule, preferring SMILES from PLIP report for accurate 2D structure.
+    
+    If PLIP XML is provided and contains SMILES, use it to create the molecule.
+    Otherwise, fall back to loading from PDB/SDF files.
+    """
+    # First, try to load from SMILES in PLIP report (most accurate for 2D rendering)
+    if plip_xml and plip_xml.exists():
+        try:
+            tree = ET.parse(plip_xml)
+            root = tree.getroot()
+            smiles_node = root.find(".//smiles")
+            if smiles_node is not None and smiles_node.text:
+                smiles = smiles_node.text.strip()
+                mol = Chem.MolFromSmiles(smiles)
+                if mol:
+                    # Remove hydrogens for cleaner 2D visualization (consistent with PDB loading)
+                    mol = Chem.RemoveHs(mol)
+                    AllChem.Compute2DCoords(mol)
+                    return mol
+        except Exception:
+            # If SMILES loading fails, fall through to file-based loading
+            pass
+    
+    # Fallback: load from structure files
     candidates = list(_iter_ligand_candidates(complex_dir))
     preferred = [c for c in candidates if c.suffix.lower() in {".sdf", ".mol"}]
     if preferred:
@@ -162,7 +187,60 @@ def _parse_plip(plip_xml: Path) -> tuple[list[Interaction], dict[str, str]]:
     return [i for i in out if i.ligand_atoms and i.protein_atom], mapping
 
 
-def build_complex_assets(complex_dir: Path) -> ComplexAssets:
+def _load_smiles_from_csv(ligand_id: str, config_path: Path | None = None) -> str | None:
+    """
+    Load original SMILES from ligands.csv file.
+    
+    This is more reliable than PLIP-extracted SMILES, which may have incorrect
+    bond orders (e.g., S1(O)[O] instead of S1(=O)=O for thiazolidine derivatives).
+    """
+    import yaml
+    import pandas as pd
+    
+    # Try to find config.yaml to get ligands folder path
+    if config_path is None:
+        # Try current directory and parent directories
+        for parent in [Path.cwd(), Path(__file__).parent.parent / "run_pipeline"]:
+            config_candidate = parent / "config.yaml"
+            if config_candidate.exists():
+                config_path = config_candidate
+                break
+    
+    if config_path is None or not config_path.exists():
+        return None
+    
+    try:
+        with config_path.open() as f:
+            cfg = yaml.safe_load(f)
+        ligands_csv = Path(cfg["paths"]["ligands_folder"]) / "ligands.csv"
+        if not ligands_csv.exists():
+            return None
+        
+        # Read CSV with proper encoding and delimiter detection
+        df = pd.read_csv(ligands_csv, sep=";", encoding="utf-8-sig")
+        df.columns = [c.strip().lstrip('\ufeff') for c in df.columns]
+        
+        # Find ID and SMILES columns (case-insensitive)
+        id_col = next((c for c in df.columns if c.lower() == "id"), None)
+        smiles_col = next((c for c in df.columns if c.lower() == "smiles"), None)
+        
+        if not id_col or not smiles_col:
+            return None
+        
+        # Find matching ligand
+        match = df[df[id_col].astype(str).str.strip() == str(ligand_id).strip()]
+        if not match.empty:
+            smiles = match.iloc[0][smiles_col]
+            if pd.notna(smiles) and str(smiles).strip():
+                return str(smiles).strip()
+    except Exception:
+        # If anything fails, return None (fallback to PLIP SMILES)
+        pass
+    
+    return None
+
+
+def build_complex_assets(complex_dir: Path, config_path: Path | None = None) -> ComplexAssets:
     complex_dir = complex_dir.resolve()
     pdb_files = list(complex_dir.glob("complex__*.pdb"))
     if not pdb_files:
@@ -179,13 +257,68 @@ def build_complex_assets(complex_dir: Path) -> ComplexAssets:
     else:
         interactions, smiles_map = [], {}
 
-    ligand = _load_ligand(complex_dir)
+    # Try to load original SMILES from CSV first (most accurate)
+    # If not available, fall back to PLIP SMILES, then PDB file
+    original_smiles = _load_smiles_from_csv(ligand_id, config_path)
+    if original_smiles:
+        # Use original SMILES from CSV (most reliable)
+        try:
+            from rdkit import Chem
+            from rdkit.Chem import AllChem
+            mol = Chem.MolFromSmiles(original_smiles)
+            if mol:
+                # Remove hydrogens for cleaner 2D visualization (like PDB loading does)
+                mol = Chem.RemoveHs(mol)
+                AllChem.Compute2DCoords(mol)
+                ligand = mol
+            else:
+                # Fallback to PLIP/PDB loading
+                ligand = _load_ligand(complex_dir, plip_xml=plip_xml if plip_xml.exists() else None)
+        except Exception:
+            # If SMILES parsing fails, fallback
+            ligand = _load_ligand(complex_dir, plip_xml=plip_xml if plip_xml.exists() else None)
+    else:
+        # Load ligand using SMILES from PLIP if available (more accurate for 2D rendering)
+        ligand = _load_ligand(complex_dir, plip_xml=plip_xml if plip_xml.exists() else None)
+    
+    # Build atom map: prefer PDB serial numbers if available, otherwise use SMILES mapping
     atom_map: dict[str, int] = {}
-    for atom in ligand.GetAtoms():
-        info = atom.GetPDBResidueInfo()
-        if info and info.GetSerialNumber():
-            atom_map[str(info.GetSerialNumber())] = atom.GetIdx()
-        atom_map.setdefault(str(atom.GetIdx()), atom.GetIdx())
+    
+    # Check if ligand was loaded from SMILES (no PDB residue info) or from PDB (has residue info)
+    has_pdb_info = any(atom.GetPDBResidueInfo() and atom.GetPDBResidueInfo().GetSerialNumber() 
+                       for atom in ligand.GetAtoms())
+    
+    if has_pdb_info:
+        # Ligand loaded from PDB - use PDB serial numbers
+        for atom in ligand.GetAtoms():
+            info = atom.GetPDBResidueInfo()
+            if info and info.GetSerialNumber():
+                atom_map[str(info.GetSerialNumber())] = atom.GetIdx()
+            # Also map by index as fallback
+            atom_map.setdefault(str(atom.GetIdx()), atom.GetIdx())
+    else:
+        # Ligand loaded from SMILES - use SMILES mapping from PLIP
+        # smiles_map maps SMILES atom indices (from PLIP) to PDB atom indices (from docked structure)
+        # We need to map these to molecule atom indices
+        if smiles_map:
+            # Create mapping: SMILES index -> molecule index
+            # Since molecule from SMILES has atoms in SMILES order, we can use direct mapping
+            # But we need to account for the fact that PLIP uses 1-based indices
+            for smiles_idx, pdb_idx in smiles_map.items():
+                try:
+                    # Try to use SMILES index directly (convert to 0-based if needed)
+                    smiles_int = int(smiles_idx.strip())
+                    # PLIP SMILES indices are typically 1-based, molecule indices are 0-based
+                    mol_idx = smiles_int - 1 if smiles_int > 0 else smiles_int
+                    if 0 <= mol_idx < ligand.GetNumAtoms():
+                        atom_map[smiles_idx] = mol_idx
+                        atom_map[pdb_idx] = mol_idx  # Also map PDB index
+                except (ValueError, IndexError):
+                    pass
+        
+        # Always add index-based mapping as fallback
+        for idx in range(ligand.GetNumAtoms()):
+            atom_map.setdefault(str(idx), idx)
     snapshot = _find_first_png(complex_dir)
 
     return ComplexAssets(

@@ -154,35 +154,8 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
     )
     board.paste(ligand_img, ligand_box[:2], ligand_img)
 
-    # Titles in a box (draw AFTER overlays so they remain visible)
-    title_font = _load_font(64)  # Larger
-    subtitle_font = _load_font(40)  # Larger
-    title = f"{assets.ligand_id} ↦ {assets.receptor_id}"
-    subtitle = "Detailed 2D interaction map"
-    
-    title_w = draw.textlength(title, font=title_font)
-    subtitle_w = draw.textlength(subtitle, font=subtitle_font)
-    max_text_w = max(title_w, subtitle_w)
-    
-    # Calculate box dimensions
-    box_padding = scale_metric(30, 20)
-    box_x = (width - max_text_w) // 2 - box_padding
-    box_y = panel[1] + scale_metric(20, 15)
-    box_w = max_text_w + box_padding * 2
-    box_h = title_font.size + subtitle_font.size + scale_metric(50, 35)
-    title_box = (box_x, box_y, box_x + box_w, box_y + box_h)
-    
-    # Draw title box with rounded corners
-    _rounded_panel(draw, title_box, 20, PALETTE.panel, PALETTE.outline)
-    
-    # Draw titles inside box
-    title_y = box_y + scale_metric(25, 18)
-    subtitle_y = title_y + title_font.size + scale_metric(15, 10)
-    draw.text(((width - title_w) // 2, title_y), title, fill=PALETTE.text_dark, font=title_font)
-    draw.text(((width - subtitle_w) // 2, subtitle_y), subtitle, fill="#4b4b4b", font=subtitle_font)
-    
-    # Store title box for collision detection
-    title_box_for_collision = title_box  # Lower to avoid overlap
+    # Titles removed - no title box
+    title_box_for_collision = (0, 0, 0, 0)  # Empty box for collision detection
 
     # Interaction ribbons
     chip_font = _load_font(28)
@@ -241,11 +214,8 @@ def render_board(assets: ComplexAssets, out_path: Path, size: tuple[int, int] = 
 
     def _within_bounds(box):
         x0, y0, x1, y1 = box
-        # Check overlap with title box
-        title_x0, title_y0, title_x1, title_y1 = title_box_for_collision
-        title_guard = scale_metric(20, 15)
-        overlaps_title = not (x1 < title_x0 - title_guard or x0 > title_x1 + title_guard or 
-                              y1 < title_y0 - title_guard or y0 > title_y1 + title_guard)
+        # Title box removed - no overlap check needed
+        overlaps_title = False
         
         return (
             x0 >= panel[0] + panel_guard

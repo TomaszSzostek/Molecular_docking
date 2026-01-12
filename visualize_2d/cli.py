@@ -50,8 +50,9 @@ def render_single(
     out_path: Path | None = None,
     size: tuple[int, int] = (1200, 800),
     fmt: str | None = None,
+    config_path: Path | None = None,
 ) -> Path:
-    assets: ComplexAssets = build_complex_assets(complex_dir)
+    assets: ComplexAssets = build_complex_assets(complex_dir, config_path=config_path)
     out = out_path or (complex_dir / "interaction_board.png")
     fmt = fmt or out.suffix.lstrip(".") or "png"
     render_board(assets, out, size=size, fmt=fmt)
