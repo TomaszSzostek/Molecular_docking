@@ -50,22 +50,17 @@ docking_params:
 
 fetch_crystals:
   enabled: true
-  pdb_ids: ['1M17','4I23','8GUA','4EKL','5OQ4','4LMN','5HD4','6SCM','5EHR','4L7B','5L2S','5L2I','5L2T']  # PDB IDs of the crystal native structures
+  pdb_ids: ['1HSK', '4PU0', '5TW8', '4C13', '2W9S', '3ZG0', '3VOB', '4URO' ]  # PDB IDs of the crystal native structures
 
   ligand_resnames:                                   # Ligand resnames of the protein crystal structures
-    1M17: 'AQ4'
-    4I23: '1C9'
-    8GUA: '1LT'
-    4EKL: '0RF'
-    5OQ4: 'A3W'
-    4LMN: 'EUI'
-    5HD4: '38Z'
-    6SCM: 'L7H'
-    5EHR: '5OD'
-    4L7B: '1VV'
-    5L2S: '6ZV'
-    5L2I: 'LQQ'
-    5L2T: '6ZZ'
+    1HSK: 'FAD'
+    4PU0: 'FMN'
+    5TW8: 'AI8'
+    4C13: 'UML'
+    2W9S: 'TOP'
+    3ZG0: 'AI8'
+    3VOB: '9PC'
+    4URO: 'NOV'
 
 
 postprocess:

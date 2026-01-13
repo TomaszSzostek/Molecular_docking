@@ -16,10 +16,11 @@ dependencies:
   - openbabel
   - pdbfixer
   - openmm
+  - openbabel
+  - plip
+  - biotite
   - pip
   - pip:
-      - openbabel-wheel
-      - plip
       - py3Dmol
       - tqdm
 

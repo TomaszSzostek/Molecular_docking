@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 import requests
-from Bio.PDB import PDBIO, PDBParser, Select
-from prepare_inputs.adt_preparator import ligand_to_pdbqt
+
+from biotite.structure.io import pdb as biotite_pdb
+import biotite.structure as biotite_structure
 
 try:
     import pdbfixer
@@ -64,7 +65,7 @@ def preprocess_protein(input_filepath: Path, ph: float = 7.4) -> Path:
     Returns
     -------
     Path
-        Path to the output processed protein PDB file (suffixed with '_fixed').
+        Path to the output processed protein PDB file.
 
     Raises
     ------
@@ -86,7 +87,9 @@ def preprocess_protein(input_filepath: Path, ph: float = 7.4) -> Path:
     fixer.addMissingHydrogens(ph)
 
     output_dir = input_filepath.parent
-    output_filepath = output_dir / f"{input_filepath.stem}_fixed.pdb"
+    output_filepath = output_dir / f"{input_filepath.stem}.pdb"
+    new_input_filepath = output_dir / f"{input_filepath.stem}_old.pdb"
+    shutil.move(input_filepath, new_input_filepath)
     with open(output_filepath, 'w') as f:
         app.PDBFile.writeFile(fixer.topology, fixer.positions, f)
     
@@ -115,60 +118,6 @@ def fetch(pdb_id: str, out_dir: Path, *, overwrite: bool = False) -> Path:
 
     return pdb_path
 
-###############################################################################
-# Biopython selectors
-###############################################################################
-
-class LigandSelect(Select):
-    """
-    Select only the first full HETATM ligand residue with given resname.
-    Also stores which chain the ligand was found in, to extract matching receptor.
-    """
-    def __init__(self, het_id: str):
-        self.het_id = het_id.strip().upper()
-        self.target_resid = None
-        self.found = 0
-        self.selected_chain_id = None
-
-    def accept_residue(self, residue):
-        resname = residue.resname.strip().upper()
-        hetfield = residue.id[0]
-        resid = (residue.get_parent().id, residue.id[1])  # chain ID, residue ID
-
-        if hetfield == " " or resname != self.het_id:
-            return False
-
-        if self.target_resid is None:
-            self.target_resid = resid
-            self.selected_chain_id = resid[0]
-            self.found = 1
-            return True
-
-        return resid == self.target_resid
-
-
-class ProteinSelectMatchingChain(Select):
-    """Export *only* the chain matching the ligand, excluding water and the ligand."""
-    def __init__(self, ligand_resname: str, chain_id: str):
-        self.ligand_resname = ligand_resname.strip().upper()
-        self.chain_id = chain_id
-
-    def accept_chain(self, chain):
-        return chain.id == self.chain_id
-
-    def accept_residue(self, residue):
-        hetfield = residue.id[0]
-        resname = residue.resname.strip().upper()
-        return (
-            hetfield == " "
-            and resname != self.ligand_resname
-            and resname not in {"HOH", "WAT"}
-        )
-
-###############################################################################
-# Main splitter
-###############################################################################
-
 def split_receptor_ligand(
     pdb_path: Path,
     ligand_resname: str,
@@ -176,7 +125,7 @@ def split_receptor_ligand(
     ligands_dir: Path,
     overwrite: bool = False
 ):
-    struct = PDBParser(QUIET=True).get_structure('X', str(pdb_path))
+    struct = biotite_pdb.get_structure(biotite_pdb.PDBFile.read(pdb_path), include_bonds=True, model=1)
 
     pdb_id = pdb_path.stem
     rec_path = receptors_dir / f"{pdb_id}.pdb"
@@ -185,36 +134,24 @@ def split_receptor_ligand(
     if not overwrite and rec_path.exists() and lig_path.exists():
         return
 
-    io = PDBIO()
+    protein_structure = struct[struct.hetero == False]
+    ligand_structures = struct[struct.res_name == ligand_resname]
 
-    # Save ligand (first matching resname only)
-    io.set_structure(struct)
-    lig_sel = LigandSelect(ligand_resname)
-    io.save(str(lig_path), lig_sel)
-
-    if lig_sel.found == 0:
-        rec_path.unlink(missing_ok=True)
-        lig_path.unlink(missing_ok=True)
-        raise RuntimeError(f"❌ Ligand '{ligand_resname}' not found in {pdb_path.name}")
-
-    # Save receptor (matching ligand's chain)
-    io.set_structure(struct)
-    io.save(str(rec_path), ProteinSelectMatchingChain(ligand_resname, lig_sel.selected_chain_id))
+    for ligand_structure in biotite_structure.chain_iter(ligand_structures):
+        break
 
     # Validate ligand = only one residue
-    residues = set()
-    with open(lig_path) as f:
-        for line in f:
-            if line.startswith("HETATM"):
-                resid = (line[21], line[22:26])
-                residues.add(resid)
-    if len(residues) > 1:
-        rec_path.unlink(missing_ok=True)
-        lig_path.unlink(missing_ok=True)
-        raise RuntimeError(f"❌ Ligand {ligand_resname} in {pdb_path.name} has multiple residues ({len(residues)})")
+    unique_residues = set(ligand_structure.res_id)
+    if len(unique_residues) > 1:
+        raise RuntimeError(f"❌ Ligand {ligand_resname} in {pdb_path.name} has multiple residues ({len(unique_residues)})")
 
-    for extra in receptors_dir.glob(f"{pdb_id}_*.pdb"):
-        extra.unlink(missing_ok=True)
+    ligand_file = biotite_pdb.PDBFile()
+    ligand_file.set_structure(ligand_structure)
+    ligand_file.write(lig_path)
+
+    protein_file = biotite_pdb.PDBFile()
+    protein_file.set_structure(protein_structure)
+    protein_file.write(rec_path)
 
 ###############################################################################
 # Batch API used by the pipeline
@@ -261,6 +198,7 @@ def fetch_and_split_batch(cfg: Mapping, log, *, overwrite: bool = False) -> None
                 log.warning("No ligand_resname for %s, guessed '%s'", pdb_id, ligand_resname)
 
             log.info("Splitting %s → receptor + %s", pdb_id, ligand_resname)
+
             split_receptor_ligand(
                 pdb_path,
                 ligand_resname,

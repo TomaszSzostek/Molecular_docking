@@ -331,7 +331,7 @@ def generate_files(cfg: dict, log):
     Discover docking results and generate visualization artifacts.
 
     Steps:
-      1) Load better_than_native.csv to get list of complexes to visualize.
+      1) Load results.csv to get list of all complexes to visualize.
       2) For each, ensure output directory exists.
       3) Call prepare_complex_pdb to build PDBs.
       4) Invoke PLIP to create interaction XML reports.
@@ -360,25 +360,25 @@ def generate_files(cfg: dict, log):
     crystals_dir = Path(cfg["paths"]["crystals_folder"])
     receptors_dir = Path(cfg["paths"]["receptors_folder"])
     
-    # Load better_than_native.csv to get only hits
-    better_csv = out_dir / "better_than_native.csv"
-    if not better_csv.exists():
-        log.warning("better_than_native.csv not found – skipping 2D visualization")
+    # Load results.csv to get all complexes
+    results_csv = out_dir / "results.csv"
+    if not results_csv.exists():
+        log.warning("results.csv not found – skipping visualization")
         return
     
     try:
-        better_df = pd.read_csv(better_csv)
+        results_df = pd.read_csv(results_csv)
     except Exception as e:
-        log.error("Failed to read better_than_native.csv: %s", e)
+        log.error("Failed to read results.csv: %s", e)
         return
     
-    if better_df.empty:
-        log.info("better_than_native.csv is empty – no complexes to visualize")
+    if results_df.empty:
+        log.info("results.csv is empty – no complexes to visualize")
         return
     
-    log.info("Preparing 2D visualizations for %d complexes from better_than_native.csv…", len(better_df))
+    log.info("Preparing visualizations for %d complexes from results.csv…", len(results_df))
 
-    for _, row in better_df.iterrows():
+    for _, row in results_df.iterrows():
         rec_id = str(row["receptor"])
         lig_id = str(row["ligand"])
         mode = str(row.get("mode", "dock"))
@@ -474,9 +474,9 @@ def generate_files(cfg: dict, log):
 
 def generate_2d_boards(cfg: dict, log):
     """
-    Generate 2D interaction boards for all complexes in better_than_native.csv.
+    Generate 2D interaction boards for all complexes in results.csv.
 
-    This function reads better_than_native.csv and generates 2D visualization
+    This function reads results.csv and generates 2D visualization
     boards for each complex using the visualize_2d module.
 
     Parameters
@@ -501,29 +501,29 @@ def generate_2d_boards(cfg: dict, log):
     out_dir = Path(cfg["paths"]["output_folder"])
     base_vis = Path(cfg["paths"]["visuals"])
     
-    # Load better_than_native.csv
-    better_csv = out_dir / "better_than_native.csv"
-    if not better_csv.exists():
-        log.warning("better_than_native.csv not found – skipping 2D board generation")
+    # Load results.csv
+    results_csv = out_dir / "results.csv"
+    if not results_csv.exists():
+        log.warning("results.csv not found – skipping 2D board generation")
         return
     
     try:
-        better_df = pd.read_csv(better_csv)
+        results_df = pd.read_csv(results_csv)
     except Exception as e:
-        log.error("Failed to read better_than_native.csv: %s", e)
+        log.error("Failed to read results.csv: %s", e)
         return
     
-    if better_df.empty:
-        log.info("better_than_native.csv is empty – no boards to generate")
+    if results_df.empty:
+        log.info("results.csv is empty – no boards to generate")
         return
     
-    log.info("Generating 2D boards for %d complexes from better_than_native.csv…", len(better_df))
+    log.info("Generating 2D boards for %d complexes from results.csv…", len(results_df))
     
     boards_dir = base_vis / "2d_boards"
     boards_dir.mkdir(parents=True, exist_ok=True)
     
     success_count = 0
-    for idx, row in better_df.iterrows():
+    for idx, row in results_df.iterrows():
         rec_id = str(row["receptor"])
         lig_id = str(row["ligand"])
         mode = str(row.get("mode", "dock"))
@@ -557,7 +557,7 @@ def generate_2d_boards(cfg: dict, log):
             log.error("Failed to generate 2D board for %s: %s", complex_dir.name, e)
             continue
     
-    log.info("Generated %d/%d 2D boards successfully", success_count, len(better_df))
+    log.info("Generated %d/%d 2D boards successfully", success_count, len(results_df))
 
 
 

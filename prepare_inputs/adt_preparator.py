@@ -17,7 +17,7 @@ Public API:
 """
 
 from pathlib import Path
-import subprocess, tempfile
+import subprocess, sys, tempfile
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from importlib.util import find_spec
@@ -51,7 +51,7 @@ def strip_alt_conformations_with_adt(pdb: Path, prefer=("A", "")) -> Path:
         The same Path pointing to the file with alternates stripped.
     """
     # 1. Run ADT to generate files like mypdb_A.pdb, mypdb_B.pdb
-    subprocess.run(['python', str(split_alt_conf), '-r', str(pdb)], check=True)
+    subprocess.run([sys.executable, str(split_alt_conf), '-r', str(pdb)], check=True)
 
     # 2. Gather all alternate-location files
     alt_files = list(pdb.parent.glob(f"{pdb.stem}_?.pdb"))
@@ -244,7 +244,7 @@ def receptor_to_pdbqt(
 
     # 3) call ADT prepare_receptor4.py
     cmd = [
-        'python', str(prep_receptor),
+        sys.executable, str(prep_receptor),
         '-r', str(pdb_in),
         '-o', str(out),
         '-A', 'checkhydrogens'
@@ -315,9 +315,10 @@ def ligand_to_pdbqt(pdb: Path, out_dir: Path, sanitize: bool = False) -> Path:
     src = _sanitize(pdb) if sanitize else pdb
     out = out_dir / f"{pdb.stem.replace('_receptor','')}.pdbqt"
 
-    subprocess.run(["python", str(prep_ligand), "-l", str(src), "-o",
-                    str(out), "-A", "hydrogens",
-                    "no_tors"], check=True)
+    subprocess.run([sys.executable, str(prep_ligand), "-l", str(src), "-o",
+                    str(out)], check=False)
+    if not out.exists():
+        raise RuntimeError(f"prepare_ligand4 failed to create {out}")
     if sanitize:
         src.unlink(missing_ok=True)
 

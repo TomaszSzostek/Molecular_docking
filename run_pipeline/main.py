@@ -143,7 +143,7 @@ def main():
         out_dir = out_root / "matrix"
     else:
         raise ValueError(f"Unsupported docking_mode: {mode}")
-    already_docked = any(out_dir.glob("*__native_redock__*.pdbqt"))
+    already_docked = any(out_dir.glob("*__native_redock.pdbqt"))
     if cfg["docking_mode"] == "redock_native" and already_docked:
         log.info("→ Docking already performed – skipping.")
     else:
